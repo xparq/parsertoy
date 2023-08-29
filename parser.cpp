@@ -128,6 +128,8 @@ public:
 	CONST _ANY         = OPCODE('*');  // 0 or more (greedy!); shortcut to [_OR [_MANY X] EMPTY]; expects 1 argument
 	                                   // - note: "greedy" above means that [A...]A will never match! Be careful!
 	CONST _OPT         = OPCODE('?');  // 0 or 1; expects 1 argument
+	CONST _NOT         = OPCODE('!');  // Expects 1 argument
+	                                   //!!EXPERIMENTAL ONLY! This is tricky with pattern matching... ;)
 
 	// Operator functions...
 	struct RULE;
@@ -450,7 +452,6 @@ DBG("static init done");
 		}
 	};
 
-
 	//-------------------------------------------------------------------
 	ops[_SEQ] = [](Parser& p, size_t pos, const RULE& rule, OUT size_t& len) -> bool
 	{
@@ -483,16 +484,16 @@ DBG("static init done");
 		}
 		return len;
 	};
-/*!!
+
 	//-------------------------------------------------------------------
 	ops[_OR]  = [](Parser& p, size_t pos, const RULE& rule, OUT size_t& len) -> bool
 	{
-		assert(count($rule) > 1);
+		assert(rule.prod.size() >= 3);
 
-		foreach ($rule as $r)
+		for (auto r = rule.prod.cbegin() + 1; r != rule.prod.cend(); ++r)
 		{
-			if (($len = $p->match($pos, $r)) !== false) {
-				return $len;
+			if (p.match(pos, *r, len)) {
+				return true;
 			} else {
 				continue;
 			}
@@ -501,18 +502,16 @@ DBG("static init done");
 	};
 
 	//-------------------------------------------------------------------
-	// Could just be _ANY{1}
+	// Could also be _ANY{1}
 	ops[_OPT] = [](Parser& p, size_t pos, const RULE& rule, OUT size_t& len) -> bool
 	{
-		assert(count($rule) == 1);
+		assert(rule.prod.size() == 2);
 
-		if (($len = $p->match($pos, $rule)) !== false) {
-			return $len;
-		} else {
-			return 0;
+		if (!p.match(pos, rule.prod[1], len)) {
+			len = 0;
 		}
+		return true;
 	};
-!!*/
 
 	//-------------------------------------------------------------------
 	ops[_ANY] = [](Parser& p, size_t pos, const RULE& rule, OUT size_t& len) -> bool
@@ -562,6 +561,18 @@ DBG("static init done");
 		return at_least_one_match;
 	};
 
+	//-------------------------------------------------------------------
+	ops[_NOT] = [](Parser& p, size_t pos, const RULE& rule, OUT size_t& len) -> bool
+	{
+		assert(rule.prod.size() == 2);
+
+		if (p.match(pos, rule.prod[1], len)) {
+			return false;
+		} else {
+			return true;
+		}
+	};
+
 } // ctor
 
 } // namespace
@@ -609,11 +620,28 @@ Parser::RULE r = Parser::RULE::PRODUCTION{
 };
 !!*/
 
-// OK:
+/* OK:
 Parser::RULE r = Parser::RULE::PRODUCTION{
 	Parser::RULE::PRODUCTION{Parser::_ANY, Parser::RULE(" ")},
-	Parser::RULE("b")
+	Parser::RULE("b"),
+};*/
+
+/* OK:
+Parser::RULE r = Parser::RULE::PRODUCTION{
+	Parser::RULE::PRODUCTION{Parser::_OR, Parser::RULE("one"), Parser::RULE("twoe"), Parser::RULE("*") },
+};*/
+
+
+Parser::RULE r = Parser::RULE::PRODUCTION{
+	Parser::RULE::PRODUCTION{Parser::_NOT, Parser::RULE(" x ")},
 };
+
+/*!! FAIL: SILENT CRASH!
+Parser::RULE r = Parser::RULE::PRODUCTION{
+	Parser::RULE::PRODUCTION{Parser::_OR, Parser::RULE("one"), Parser::RULE("two"), Parser::RULE("*") },
+	Parser::RULE::PRODUCTION{Parser::_NOT, Parser::RULE("x")},
+};
+!!*/
 
 //!! Regex not yet...:
 //Parser::RULE r = Parser::RULE::PRODUCTION{Parser::RULE("a"), Parser::RULE("_WHITESPACES"), Parser::RULE("b")};
