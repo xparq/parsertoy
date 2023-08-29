@@ -1,0 +1,7 @@
+﻿*.obj
+*.exe
+*.ilk
+*.pdb
+*.i
+
+_scratch_.cpp
