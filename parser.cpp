@@ -16,8 +16,13 @@
  
  -----------------------------------------------------------------------------
   TODO:
- 
-  - Still crashes on setting up basic constructs!
+
+  - Investigate the amazing "vector too long" C++ error for just a single
+
+      auto p = Parser::RULE::PRODUCTION{"a", "b"}; // PRODUCTION is vector<RULE>
+
+    (Both in MSVC and GCC!)
+
   - regex
  *****************************************************************************/
 
@@ -37,28 +42,71 @@ pcre2_code *re = pcre2_compile(pattern, PCRE2_ZERO_TERMINATED,
                                 &erroroffset, NULL);
 !!*/
 
-
+//=============================================================================
 //---------------------------------------------------------------------------
-#define CONST constexpr static auto
-#define OUT
-
-#define ERROR(msg, ...) throw std::runtime_error( \
-	std::format("- ERROR: {}", format(msg, __VA_ARGS__)))
-
-#define DBG(msg, ...) cerr << format("DBG> {}", format(msg, __VA_ARGS__)) << endl
-
-	//!  MSVC suppresses the extra , when no args...
-	//!! ...BUT THEN, THIS FAILS THERE: ... (str) __VA_OPT__(,) __VA_ARGS__))
-	//!! NOT SURE WHAT GCC WOULD DO!
-
-
+// My ad-hoc "ground-levelling" base language layer...
 //---------------------------------------------------------------------------
-
 #include <cassert>
 #include <exception>
 #include <stdexcept>
+#include <format>
+	using std::format;
+//#include <print> //!! Sigh... 2023 Sep: still can't use this yet... Wow.
+//	using std::print;
 #include <string>
 	using std::string;
+	using namespace std::literals::string_literals;
+
+#ifndef NDEBUG
+#include <iostream>
+	using std::cerr, std::cout, std::endl;
+#endif
+
+#define CONST constexpr static auto
+#define OUT
+#define FALLTHROUGH // For switch cases with intentionally no `break;`
+#define IGNORE // To silence unused fn. arg warnings. Usage: IGNORE arg1, arg2;
+               // This macro can't just be [[maybe_unused]], unfortunately. :)
+               // MSVC is fine with just a var list, and so was GCC 12 -Wall, but v13
+               // started complaining about "left operand of comma operator has no effect".
+
+//! For variadic macros, e.g. for calling std::format(...):
+//!
+//! MSVC suppresses the extra ',' when no more args... But, it doesn't
+//! understand __VA_OPT__, so the std. c++20
+//!
+//! __VA_OPT__(,) __VA_ARGS__ approach can't be unified... Welcome to 2023!
+//!
+//! (GCC is OK with that.)
+
+#ifndef NDEBUG
+//#
+#  if defined(_MSC_BUILD)
+#    define DBG(msg, ...) std::cerr << std::format("DBG> {}", std::format(msg, __VA_ARGS__)) << std::endl
+#  elif defined(__GNUC__)
+#    define DBG(msg, ...) std::cerr << std::format("DBG> {}", std::format(msg __VA_OPT__(,) __VA_ARGS__)) << std::endl
+#  else
+#    error Unsupported compiler toolset (not MSVC or GCC/CLANG)!
+#  endif
+//#
+#else
+#  define DBG(msg, ...)
+#endif
+
+// Note: ERROR() below is _not_ a debug feature!
+#if defined(_MSC_BUILD)
+#  define ERROR(msg, ...) throw std::runtime_error(std::format("- ERROR: {}", std::format(msg, __VA_ARGS__)))
+#elif defined(__GNUC__)
+#  define ERROR(msg, ...) throw std::runtime_error(std::format("- ERROR: {}", std::format(msg __VA_OPT__(,) __VA_ARGS__)))
+#else
+#  error Unsupported compiler toolset (not MSVC or GCC/CLANG)!
+#endif
+//---------------------------------------------------------------------------
+//=============================================================================
+
+
+
+//---------------------------------------------------------------------------
 #include <string_view>
 	using std::string_view;
 #include <regex>
@@ -72,13 +120,7 @@ pcre2_code *re = pcre2_compile(pattern, PCRE2_ZERO_TERMINATED,
 #include <unordered_map>
 #include <initializer_list>
 	using std::initializer_list;
-#include <format>
-	using std::format;
-//!!Sigh... 2023 Sep: still not yet.
-//#include <print>
-//	using std::print;
-#include <iostream>
-	using std::cerr, std::cout, std::endl;
+
 
 //---------------------------------------------------------------------------
 namespace Parsing {
@@ -183,8 +225,11 @@ public:
 		RULE(const ATOM& atom);
 		RULE(OPCODE opcode): type(OP), opcode(opcode) {}
 		RULE(const PRODUCTION& expr): type(PROD), prod(expr) {
+DBG("RULE::ctor(PROD): BEGIN)");
+
 			assert(prod.size() == expr.size());
 			if (prod.size()) assert(expr[0].type == prod[0].type);
+DBG("RULE::ctor(PROD): END)");
 		}
 		// Copy & desctuction...
 		RULE(const RULE& other): type(_DESTROYED_) { _copy(other); }
@@ -196,23 +241,45 @@ public:
 	private:
 		void _set_nil() { type = NIL; d_name = "NIL"; }
 		void _destruct() {
-//DBG("~RULE: BEGIN (type == {})", (int)type);
+DBG("~RULE: BEGIN (type == {})", (int)type);
+//DBG("~RULE destroying:"); DUMP();
 			assert (type != _DESTROYED_);
 			if      (is_atom()) atom.~string();
 			else if (type == PROD) prod.~PRODUCTION(); //! Can't use is_prod() here: it's false if empty()!
 			type = _DESTROYED_;
-//DBG("~RULE: END");
+DBG("~RULE: END");
 		}
 		void _copy(const RULE& other) {
-//DBG("RULE::_copy: BEGIN)");
+DBG("RULE::_copy: BEGIN)");
 			//!! Assumes not being constructed already!
 			assert(type == _DESTROYED_);
 			type = other.type;
 			if      (is_atom()) new (&atom) ATOM(other.atom);
 			else if (type == PROD) new (&prod) PRODUCTION(other.prod); //! Can't use is_prod() here: it's false if empty()!
 			else                opcode = other.opcode; // just a number...
-//DBG("RULE::_copy: END (type == {})", (int)type);
+DBG("RULE::_copy: END (type == {})", (int)type);
 		}
+		void _dump(int level = 0) {
+			auto p = [&](auto x, auto... args) { string prefix(level * 2, ' ');
+				cerr << "     " << prefix << x << endl;
+				};
+			if (!level) p("/--------------------------------------------------------------------------\\");
+			p(format("type: {}", (int)type));
+			if (is_atom()) { p(format("\"{}\"", atom));
+			} else if (type == PROD) { //! Can't use is_prod() here: it's false if empty()!
+				p("{");
+				for (auto& r : prod) { r._dump(level + 1); }
+				p("}");
+			} else if (type == OP) { p(format("opcode: {}", opcode));
+			} else if (type == _DESTROYED_) { p("!!!! _DESTROYED_ !!!!");
+			} else p("*** UNKNOWN/INVALID RULE TYPE! ***");
+			if (!level) p("\\--------------------------------------------------------------------------/\n");
+		}
+#ifndef NDEBUG
+		public: void DUMP() { _dump(); }
+#else
+		public: void DUMP() {}
+#endif
 	};
 
 
@@ -344,6 +411,7 @@ Parser::RULE::RULE(const string& s)
 // For efficiency, the actual type (`type`) and it's "actual value" (e.g. the
 // regex of a named pattern) is resolved and recorded (cached) here.
 {
+DBG("ATOM CTOR for: '{}'", s);
 	if (s.empty()) { _set_nil(); return; }
 
 	d_name = s; // Save it as name for diagnostics (even though it's the same as it's value for literals)
@@ -591,13 +659,17 @@ DBG("static init done");
 
 
 //===========================================================================
-int main(int argc, char** argv)
-{argc, argv;
+#include <iostream>
 
+int main([[maybe_unused]] int argc, [[maybe_unused]] char** argv)
+{
 	using namespace Parsing;
 
 	try {
-Parser dummy_for_init({""}); //!!Just to setup the static lookup table(s)!... :)
+Parser("! dummy parser for static init !"s); //!!Just to setup the static lookup table(s)!... :)
+	//!!??
+	//!!?? WHY IS THERE A COPY EVEN FOR THIS? :-ooo
+	//!!??
 
 // OK:
 //Parser::RULE r = Parser::ATOM("my atom");
@@ -631,12 +703,12 @@ Parser::RULE r = Parser::RULE::PRODUCTION{
 	Parser::RULE::PRODUCTION{Parser::RULE(Parser::_NIL)},
 };*/
 
-///* OK:
+/* OK:
 Parser::RULE r = Parser::RULE::PRODUCTION{
 	Parser::RULE("a"),
 	Parser::RULE::PRODUCTION{Parser::_ANY, Parser::RULE(" ")},
 	Parser::RULE("b"),
-};//*/
+};*/
 
 /* OK:
 Parser::RULE r = Parser::RULE::PRODUCTION{
@@ -657,19 +729,29 @@ Parser::RULE r = Parser::RULE::PRODUCTION{
 //!! Regex not yet...:
 //Parser::RULE r = Parser::RULE::PRODUCTION{Parser::RULE("a"), Parser::RULE("_WHITESPACES"), Parser::RULE("b")};
 
-//!! FAIL:
+//!! FAIL: can't compile
 //Parser::RULE r = Parser::RULE::PRODUCTION{"x"};
 //Parser::RULE r = Parser::RULE(Parser::RULE::PRODUCTION{"x"});
 
-// OK
+// OK:
 //Parser::RULE r = Parser::RULE(Parser::RULE::PRODUCTION{Parser::RULE("x")});
+
+//OK:
+//Parser::RULE r = Parser::RULE::PRODUCTION{Parser::RULE("a"), Parser::RULE("b")};
+//Parser::RULE r = Parser::RULE::PRODUCTION{"a"s, "b"s};
+//Parser::RULE r = Parser::RULE::PRODUCTION{"a"s}; // Seems to be the same: Parser::RULE r{ Parser::RULE::PRODUCTION{"a"s} };
+
+//!! FAIL: can't compile
+//Parser::RULE r = Parser::RULE::PRODUCTION{"x"};
 
 //!!
 //!! FAIL: compiles, but "vector too long"!... :-o
+auto p = Parser::RULE::PRODUCTION{"a", "b"};
+Parser::RULE r("");
 //Parser::RULE r = Parser::RULE::PRODUCTION{"a", "b"};
 //!!
 
-//!! FAIL:
+//!! FAIL: can't compile
 //Parser::RULE r = Parser::RULE::PRODUCTION{"_WHITESPACE", Parser::RULE::PRODUCTION{"a", "b"}, "_WHITESPACE"};
 
 //!! FAIL: compiles, but "vector too long"!... :-o
@@ -685,12 +767,17 @@ Parser::RULE r = Parser::RULE::PRODUCTION{
 //	Parser::RULE g1 = RULE({Parser::RULE("_WHITESPACES"), Parser::RULE("bingo"), Parser::RULE("_WHITESPACES"});
 //	Parser::RULE g2 = {Parser::_SEQ, "one", Parser::RULE(Parser::_NIL)};
 
+		r.DUMP();
+/*
 		Parser p(r);
 
 		auto text = argc < 2 ? "" : argv[1];
+
 		size_t matched_len = 0xffffffff; auto res = p.parse(text, matched_len);
 
 		cerr << format("Result: {} (matched: {})", res, matched_len) << "\n";
+*/
+		cerr << "\n                              >>>>> FINISHED. <<<<<\n\n" << endl;
 
 	} catch(std::runtime_error& x) {
 		cerr << x.what() << "\n";
@@ -702,6 +789,4 @@ Parser::RULE r = Parser::RULE::PRODUCTION{
 		cerr << "- UNKNOWN ERROR(S)!...\n";
 		exit(-9);
 	}
-
-//cerr << "OK\n";
 }
