@@ -45,7 +45,7 @@ pcre2_code *re = pcre2_compile(pattern, PCRE2_ZERO_TERMINATED,
 #define ERROR(msg, ...) throw std::runtime_error( \
 	std::format("- ERROR: {}", format(msg, __VA_ARGS__)))
 
-#define DBG(msg, ...) cerr << format("DBG> {}", format(msg, __VA_ARGS__)) << "\n"
+#define DBG(msg, ...) cerr << format("DBG> {}", format(msg, __VA_ARGS__)) << endl
 
 	//!  MSVC suppresses the extra , when no args...
 	//!! ...BUT THEN, THIS FAILS THERE: ... (str) __VA_OPT__(,) __VA_ARGS__))
@@ -150,8 +150,6 @@ public:
 		// User Grammar rule expression, as a recursive RULE tree
 		using PRODUCTION = std::vector<RULE>;
 
-//!!REMOVE:		using ITER = PRODUCTION::const_iterator;
-
 		enum {
 			NIL,
 			CURATED_REGEX,   // built-in "atomic" regex pattern
@@ -163,7 +161,7 @@ public:
 
 			_DESTROYED_, // See _copy() and _destruct()! :-o
 		} type;
-		union {
+		union { //!! variant<ATOM, OPCODE, PRODUCTION> val;
 			ATOM       atom; //!! Should be extended later to support optional name + regex pairs! (See d_name, currently!)
 			                 //!! Or, actually, better to have patterns as non-atomic types instead (finally)?
 					 //!! Also: extend to support precompiled regexes!
@@ -184,29 +182,36 @@ public:
 		// Construction...
 		RULE(const ATOM& atom);
 		RULE(OPCODE opcode): type(OP), opcode(opcode) {}
-		RULE(const PRODUCTION& expr): type(PROD), prod(expr) {}
+		RULE(const PRODUCTION& expr): type(PROD), prod(expr) {
+			assert(prod.size() == expr.size());
+			if (prod.size()) assert(expr[0].type == prod[0].type);
+		}
 		// Copy & desctuction...
-		RULE(const RULE& other) { type = _DESTROYED_; _copy(other); }
-		RULE& operator=(const RULE& other) { if (&other != this) {_destruct(); _copy(other); } return *this; }
+		RULE(const RULE& other): type(_DESTROYED_) { _copy(other); }
+		RULE& operator=(const RULE& other) { if (&other != this) { _destruct(); _copy(other); } return *this; }
 		RULE(const RULE&& other) = delete; //!! Shouldn't be deleted, but I'm just tired of it...
 		~RULE() {
-//DBG("~RULE");
 			_destruct();
 		}
 	private:
 		void _set_nil() { type = NIL; d_name = "NIL"; }
 		void _destruct() {
+//DBG("~RULE: BEGIN (type == {})", (int)type);
+			assert (type != _DESTROYED_);
 			if      (is_atom()) atom.~string();
-			else if (is_prod()) prod.~PRODUCTION();
+			else if (type == PROD) prod.~PRODUCTION(); //! Can't use is_prod() here: it's false if empty()!
 			type = _DESTROYED_;
+//DBG("~RULE: END");
 		}
 		void _copy(const RULE& other) {
+//DBG("RULE::_copy: BEGIN)");
 			//!! Assumes not being constructed already!
 			assert(type == _DESTROYED_);
 			type = other.type;
 			if      (is_atom()) new (&atom) ATOM(other.atom);
-			else if (is_prod()) new (&prod) PRODUCTION(other.prod);
-			else                opcode = other.opcode; // this is just a number...
+			else if (type == PROD) new (&prod) PRODUCTION(other.prod); //! Can't use is_prod() here: it's false if empty()!
+			else                opcode = other.opcode; // just a number...
+//DBG("RULE::_copy: END (type == {})", (int)type);
 		}
 	};
 
@@ -414,6 +419,13 @@ DBG("static init done");
 		statics_initialized = true;
 	}
 
+
+	//-------------------------------------------------------------------
+	ops[_NIL] = [](Parser&, size_t, const RULE&, OUT size_t&) -> bool
+	{
+		return false;
+	};
+
 	//-------------------------------------------------------------------
 	ops[_ATOM] = [](Parser& p, size_t pos, const RULE& rule, OUT size_t& len) -> bool
 	{
@@ -613,35 +625,34 @@ Parser dummy_for_init({""}); //!!Just to setup the static lookup table(s)!... :)
 // OK:
 //Parser::RULE r = Parser::RULE::PRODUCTION{Parser::_ANY, Parser::RULE("x")};
 
-/*!! FAIL: SILENT CRASH!
+/* OK:
+Parser::RULE r = Parser::RULE::PRODUCTION{
+	Parser::RULE("a"),
+	Parser::RULE::PRODUCTION{Parser::RULE(Parser::_NIL)},
+};*/
+
+///* OK:
 Parser::RULE r = Parser::RULE::PRODUCTION{
 	Parser::RULE("a"),
 	Parser::RULE::PRODUCTION{Parser::_ANY, Parser::RULE(" ")},
-};
-!!*/
-
-/* OK:
-Parser::RULE r = Parser::RULE::PRODUCTION{
-	Parser::RULE::PRODUCTION{Parser::_ANY, Parser::RULE(" ")},
 	Parser::RULE("b"),
-};*/
+};//*/
 
 /* OK:
 Parser::RULE r = Parser::RULE::PRODUCTION{
 	Parser::RULE::PRODUCTION{Parser::_OR, Parser::RULE("one"), Parser::RULE("twoe"), Parser::RULE("*") },
 };*/
 
-
+/* OK:
 Parser::RULE r = Parser::RULE::PRODUCTION{
 	Parser::RULE::PRODUCTION{Parser::_NOT, Parser::RULE(" x ")},
-};
+};*/
 
-/*!! FAIL: SILENT CRASH!
+/* OK:
 Parser::RULE r = Parser::RULE::PRODUCTION{
 	Parser::RULE::PRODUCTION{Parser::_OR, Parser::RULE("one"), Parser::RULE("two"), Parser::RULE("*") },
 	Parser::RULE::PRODUCTION{Parser::_NOT, Parser::RULE("x")},
-};
-!!*/
+};*/
 
 //!! Regex not yet...:
 //Parser::RULE r = Parser::RULE::PRODUCTION{Parser::RULE("a"), Parser::RULE("_WHITESPACES"), Parser::RULE("b")};
@@ -653,8 +664,10 @@ Parser::RULE r = Parser::RULE::PRODUCTION{
 // OK
 //Parser::RULE r = Parser::RULE(Parser::RULE::PRODUCTION{Parser::RULE("x")});
 
+//!!
 //!! FAIL: compiles, but "vector too long"!... :-o
 //Parser::RULE r = Parser::RULE::PRODUCTION{"a", "b"};
+//!!
 
 //!! FAIL:
 //Parser::RULE r = Parser::RULE::PRODUCTION{"_WHITESPACE", Parser::RULE::PRODUCTION{"a", "b"}, "_WHITESPACE"};
