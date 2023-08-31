@@ -17,12 +17,6 @@
  -----------------------------------------------------------------------------
   TODO:
 
-  - Investigate the amazing "vector too long" C++ error for just a single
-
-      auto p = Parser::RULE::PRODUCTION{"a", "b"}; // PRODUCTION is vector<RULE>
-
-    (Both in MSVC and GCC!)
-
   - regex
  *****************************************************************************/
 
@@ -131,33 +125,10 @@ pcre2_code *re = pcre2_compile(pattern, PCRE2_ZERO_TERMINATED,
 //---------------------------------------------------------------------------
 namespace Parsing {
 
-class Parser
-{
-public:
-	//-------------------------------------------------------------------
-	// "Curated atoms" (named terminal pattens) -- "metasyntactic sugar" only,
-	// as they could as well be just literal patterns. But fancy random regex
-	// literals could confuse the parsing, so these "officially" nicely behaving
-	// ones are just named & groomed here.
-	// (BTW, a user pattern that's not anchored to the left is guaranteed to 
-	// fail, as the relevant preg_match() call only returns the match length.
-	// It could be extended though, but I'm not sure about multibyte support,
-	// apart from my suspicion that mbstring *doesn't* have a position-capturing
-	// preg_match (only ereg_... crap). [Wow, checking in from 2023: yep, still
-	// that's the case. However, according to the Git log, this thing doesn't
-	// even use mbstring any more!])
-	// NOTE: PCRE *is* UNICODE-aware! --> http://pcre.org/original/doc/html/pcreunicode.html
-
-	using STRING_MAP = std::unordered_map<string, string>;
-//!!	using REGEX_MAP = std::unordered_map<string, regex>;
-	static STRING_MAP NAMED_PATTERN; //!! Alas, no constexpr init for dynamic containers... :-/ = {
-	                                 //!! And then it's also problematic to make it static... See the ctor!
-
+	using ATOM = string; // direct literal or "terminal regex"
 
 	//-------------------------------------------------------------------
 	// Built-in meta-grammar operators (terminal rules)...
-
-	using ATOM = string; // direct literal or "terminal regex"
 
 	// Opcodes... (regex-inspired)
 	//
@@ -182,6 +153,7 @@ public:
 
 	// Operator functions...
 	struct RULE;
+	class Parser;
 	using OPERATION = std::function<bool(Parser&, size_t src_pos, const RULE&, OUT size_t& matched_len)>;
 
 	// Operator lookup table...
@@ -192,103 +164,117 @@ public:
 	// Can be freely extended by users (respecting the opcode list above).
 
 
-	//-------------------------------------------------------------------
-	// Grammar rules...
-	struct RULE
-	{
-		// User Grammar rule expression, as a recursive RULE tree
-		using PRODUCTION = std::vector<RULE>;
 
-		enum {
-			NIL,
-			CURATED_REGEX,   // built-in "atomic" regex pattern
-			CURATED_LITERAL, // built-in "atomic" literal
-			USER_REGEX,
-			USER_LITERAL,
-			OP,
-			PROD,
+//-------------------------------------------------------------------
+// Grammar rules...
+//---------------------------------------------------------------------------
+struct RULE
+{
+	// User Grammar rule expression, as a recursive RULE tree
+	using PRODUCTION = std::vector<RULE>;
 
-			_DESTROYED_, // See _copy() and _destruct()! :-o
-		} type;
+	enum {
+		NIL,
+		CURATED_REGEX,   // built-in "atomic" regex pattern
+		CURATED_LITERAL, // built-in "atomic" literal
+		USER_REGEX,
+		USER_LITERAL,
+		OP,
+		PROD,
 
-		union { //!! variant<ATOM, OPCODE, PRODUCTION> val;
-			ATOM       atom; //!! Should be extended later to support optional name + regex pairs! (See d_name, currently!)
-			                 //!! Or, actually, better to have patterns as non-atomic types instead (finally)?
-					 //!! Also: extend to support precompiled regexes!
-			OPCODE     opcode;
-			PRODUCTION prod;
-		};
+		_DESTROYED_, // See _copy() and _destruct()! :-o
+	} type;
 
-		string d_name; // symbolic name, if any (e.g. for named patterns) for diagnostics only
-
-		//-----------------------------------------------------------
-		// Queries...
-		bool is_atom() const { return type == CURATED_REGEX || type == CURATED_LITERAL
-		                           || type == USER_LITERAL || type == USER_REGEX; }
-		bool is_prod() const { return type == PROD && !prod.empty(); }
-		bool is_opcode() const { return type == OP; }
-
-		//-----------------------------------------------------------
-		// Construction...
-		RULE(const ATOM& atom);
-		RULE(OPCODE opcode): type(OP), opcode(opcode) {}
-		RULE(const PRODUCTION& expr): type(PROD), prod(expr) {
-DBG("RULE::ctor(PROD)...");
-			assert(prod.size() == expr.size());
-			if (prod.size()) assert(expr[0].type == prod[0].type);
-//DBG("RULE::ctor(PROD) done.");
-		}
-		// Copy & desctuction...
-		RULE(const RULE& other): type(_DESTROYED_) { _copy(other); }
-		RULE& operator=(const RULE& other) { if (&other != this) { _destruct(); _copy(other); } return *this; }
-		RULE(const RULE&& other) = delete; //!! Shouldn't be deleted, but I'm just tired of it...
-		~RULE() {
-			_destruct();
-		}
-	private:
-		void _set_nil() { type = NIL; d_name = "NIL"; }
-		void _destruct() {
-DBG("~RULE (type == {})...", (int)type);
-//DBG("~RULE destroying:"); DUMP();
-			assert (type != _DESTROYED_);
-			if      (is_atom()) atom.~string();
-			else if (type == PROD) prod.~PRODUCTION(); //! Can't use is_prod() here: it's false if empty()!
-			type = _DESTROYED_;
-//DBG("~RULE done.");
-		}
-		void _copy(const RULE& other) {
-//DBG("RULE::_copy...");
-			//!! Assumes not being constructed already!
-			assert(type == _DESTROYED_);
-			type = other.type;
-			if      (is_atom()) new (&atom) ATOM(other.atom);
-			else if (type == PROD) new (&prod) PRODUCTION(other.prod); //! Can't use is_prod() here: it's false if empty()!
-			else                opcode = other.opcode; // just a number...
-DBG("RULE::_copy (type == {}) done.", (int)type);
-		}
-		void _dump(unsigned level = 0) {
-			auto p = [&](auto x, auto... args) { string prefix(level * 2, ' ');
-				cerr << "     " << prefix << x << endl;
-				};
-			if (!level) p("/--------------------------------------------------------------------------\\");
-			p(format("type: {}", (int)type));
-			if (is_atom()) { p(format("\"{}\"", atom));
-			} else if (type == PROD) { //! Can't use is_prod() here: it's false if empty()!
-				p("{");
-				for (auto& r : prod) { r._dump(level + 1); }
-				p("}");
-			} else if (type == OP) { p(format("opcode: {}", opcode));
-			} else if (type == _DESTROYED_) { p("!!!! _DESTROYED_ !!!!");
-			} else p("*** UNKNOWN/INVALID RULE TYPE! ***");
-			if (!level) p("\\--------------------------------------------------------------------------/\n");
-		}
-#ifndef NDEBUG
-		public: void DUMP() { _dump(); }
-#else
-		public: void DUMP() {}
-#endif
+	union { //!! variant<ATOM, OPCODE, PRODUCTION> val;
+		ATOM       atom; //!! Should be extended later to support optional name + regex pairs! (See d_name, currently!)
+					//!! Or, actually, better to have patterns as non-atomic types instead (finally)?
+					//!! Also: extend to support precompiled regexes!
+		OPCODE     opcode;
+		PRODUCTION prod;
 	};
 
+	string d_name; // symbolic name, if any (e.g. for named patterns) for diagnostics only
+
+	//-----------------------------------------------------------
+	// Queries...
+	bool is_atom() const { return type == CURATED_REGEX || type == CURATED_LITERAL
+					|| type == USER_LITERAL || type == USER_REGEX; }
+	bool is_prod() const { return type == PROD && !prod.empty(); }
+	bool is_opcode() const { return type == OP; }
+
+	//-----------------------------------------------------------
+	// Construction...
+	RULE(const ATOM& atom);
+	RULE(const char* atom) : RULE(string(atom)) {} // C++ will do all things evil with autoconversions, but not this, so... added.
+	RULE(OPCODE opcode): type(OP), opcode(opcode) {}
+	RULE(const PRODUCTION& expr): type(PROD), prod(expr) {
+DBG("RULE::ctor(PROD)...");
+		assert(prod.size() == expr.size());
+		if (prod.size()) assert(expr[0].type == prod[0].type);
+//DBG("RULE::ctor(PROD) done.");
+	}
+	// Copy & desctuction...
+	RULE(const RULE& other): type(_DESTROYED_) { _copy(other); }
+	RULE& operator=(const RULE& other) { if (&other != this) { _destruct(); _copy(other); } return *this; }
+	RULE(const RULE&& other) = delete; //!! Shouldn't be deleted, but I'm just tired of it...
+	~RULE() {
+		_destruct();
+	}
+private:
+	void _set_nil() { type = NIL; d_name = "NIL"; }
+	void _destruct() {
+DBG("~RULE (type == {})...", (int)type);
+//DBG("~RULE destroying:"); DUMP();
+		assert (type != _DESTROYED_);
+		if      (is_atom()) atom.~string();
+		else if (type == PROD) prod.~PRODUCTION(); //! Can't use is_prod() here: it's false if empty()!
+		type = _DESTROYED_;
+//DBG("~RULE done.");
+	}
+	void _copy(const RULE& other) {
+//DBG("RULE::_copy...");
+		//!! Assumes not being constructed already!
+		assert(type == _DESTROYED_);
+		type = other.type;
+		if      (is_atom()) new (&atom) ATOM(other.atom);
+		else if (type == PROD) new (&prod) PRODUCTION(other.prod); //! Can't use is_prod() here: it's false if empty()!
+		else                opcode = other.opcode; // just a number...
+DBG("RULE::_copy (type == {}) done.", (int)type);
+	}
+	void _dump(unsigned level = 0) {
+		auto p = [&](auto x, auto... args) { string prefix(level * 2, ' ');
+			cerr << "     " << prefix << x << endl;
+			};
+		if (!level) p("/--------------------------------------------------------------------------\\");
+		p(format("type: {}", (int)type));
+		if (is_atom()) { p(format("\"{}\"", atom));
+		} else if (type == PROD) { //! Can't use is_prod() here: it's false if empty()!
+			p("{");
+			for (auto& r : prod) { r._dump(level + 1); }
+			p("}");
+		} else if (type == OP) { p(format("opcode: {}", opcode));
+		} else if (type == _DESTROYED_) { p("!!!! _DESTROYED_ !!!!");
+		} else p("*** UNKNOWN/INVALID RULE TYPE! ***");
+		if (!level) p("\\--------------------------------------------------------------------------/\n");
+	}
+#ifndef NDEBUG
+	public: void DUMP() { _dump(); }
+#else
+	public: void DUMP() {}
+#endif
+};
+
+
+
+//---------------------------------------------------------------------------
+class Parser
+//---------------------------------------------------------------------------
+{
+public:
+	using STRING_MAP = std::unordered_map<string, string>;
+//!!	using REGEX_MAP = std::unordered_map<string, regex>;
+	static STRING_MAP NAMED_PATTERN; //!! Alas, no constexpr init for dynamic containers... :-/ = {
+	                                 //!! And then it's also problematic to make it static... See the ctor!
 
 	//-------------------------------------------------------------------
 	// Parser state...
@@ -413,7 +399,7 @@ Parser::STRING_MAP Parser::NAMED_PATTERN = {}; // Initialize at least to {}, to 
 //===========================================================================
 
 //---------------------------------------------------------------------------
-Parser::RULE::RULE(const string& s)
+RULE::RULE(const string& s)
 // A `string` arg. can mean:
 //   a) symbol: the name of a curated item (either regex or literal)
 //   b) direct ("user") string literal
@@ -446,7 +432,7 @@ DBG("RULE init with literal '{}'", atom);
 }
 
 /*!!
-OPERATION Parser::RULE::op(OPCODE code) const
+OPERATION RULE::op(OPCODE code) const
 {
 	assert(type == PROD); //! Never asking the opcode directly! :)
 	auto   it  = ops.find(code);
@@ -469,6 +455,20 @@ Parser::Parser(const RULE& syntax, int maxnest/* = DEFAULT_RECURSION_LIMIT*/):
 	static auto statics_initialized = false;
 	if (!statics_initialized)
 	{
+		//-------------------------------------------------------------------
+		// "Curated atoms" (named terminal pattens) -- "metasyntactic sugar" only,
+		// as they could as well be just literal patterns. But fancy random regex
+		// literals could confuse the parsing, so these "officially" nicely behaving
+		// ones are just named & groomed here.
+		// (BTW, a user pattern that's not anchored to the left is guaranteed to 
+		// fail, as the relevant preg_match() call only returns the match length.
+		// It could be extended though, but I'm not sure about multibyte support,
+		// apart from my suspicion that mbstring *doesn't* have a position-capturing
+		// preg_match (only ereg_... crap). [Wow, checking in from 2023: yep, still
+		// that's the case. However, according to the Git log, this thing doesn't
+		// even use mbstring any more!])
+		// NOTE: PCRE *is* UNICODE-aware! --> http://pcre.org/original/doc/html/pcreunicode.html
+
 		assert(NAMED_PATTERN.empty()); // This won't prevent the C++ static init fiasco, but at least we can have a spectacle... ;)
 		NAMED_PATTERN = { //!! Alas, no constexpr init for dynamic containers; have to do it here...
 			//!!
@@ -666,6 +666,9 @@ DBG("static init done");
 
 } // ctor
 
+	// A little painkiller for grammar-building:
+	using _ = RULE::PRODUCTION;
+
 } // namespace
 
 
@@ -683,105 +686,108 @@ Parser("! dummy parser for static init !"s); //!!Just to setup the static lookup
 	//!!??
 
 // OK:
-//Parser::RULE r = Parser::ATOM("my atom");
+//RULE r = Parser::ATOM("my atom");
 // OK:
 //auto r_copy = r;
 // OK:
 //using Ss = std::vector<string>; Ss s = {"a"};
 // OK:
-//using Rs = std::vector<Parser::RULE>; Rs r = {Parser::RULE("a")};
+//using Rs = std::vector<RULE>; Rs r = {RULE("a")};
 // Not needed:
-//using Rs = std::vector<Parser::RULE>; Rs r = initializer_list<Parser::RULE>({Parser::RULE("a")});
+//using Rs = std::vector<RULE>; Rs r = initializer_list<RULE>({RULE("a")});
 // OK:
-//Parser::RULE r = {Parser::RULE("a")};
+//RULE r = {RULE("a")};
 
 //!! FAIL: ctor ambiguous etc.:
-//Parser::RULE r = {Parser::RULE("a"), Parser::RULE("b")};
-//Parser::RULE r = initializer_list<Parser::RULE>({Parser::RULE("a"), Parser::RULE("b")});
+//RULE r = {RULE("a"), RULE("b")};
+//RULE r = initializer_list<RULE>({RULE("a"), RULE("b")});
 
 // OK:
-//Parser::RULE r = Parser::RULE::PRODUCTION{Parser::RULE("a"), Parser::RULE(" "), Parser::RULE("b")};
+//RULE r = _{RULE("a"), RULE(" "), RULE("b")};
 
 // OK:
-//Parser::RULE r = Parser::RULE::PRODUCTION{Parser::_MANY, Parser::RULE("x")};
+//RULE r = _{Parser::_MANY, RULE("x")};
 
 // OK:
-//Parser::RULE r = Parser::RULE::PRODUCTION{Parser::_ANY, Parser::RULE("x")};
+//RULE r = _{Parser::_ANY, RULE("x")};
 
 /* OK:
-Parser::RULE r = Parser::RULE::PRODUCTION{
-	Parser::RULE("a"),
-	Parser::RULE::PRODUCTION{Parser::RULE(Parser::_NIL)},
+RULE r = _{
+	RULE("a"),
+	_{RULE(Parser::_NIL)},
 };*/
 
 /* OK:
-Parser::RULE r = Parser::RULE::PRODUCTION{
-	Parser::RULE("a"),
-	Parser::RULE::PRODUCTION{Parser::_ANY, Parser::RULE(" ")},
-	Parser::RULE("b"),
+RULE r = _{
+	RULE("a"),
+	_{Parser::_ANY, RULE(" ")},
+	RULE("b"),
 };*/
 
 /* OK:
-Parser::RULE r = Parser::RULE::PRODUCTION{
-	Parser::RULE::PRODUCTION{Parser::_OR, Parser::RULE("one"), Parser::RULE("twoe"), Parser::RULE("*") },
+RULE r = _{
+	_{Parser::_OR, RULE("one"), RULE("twoe"), RULE("*") },
 };*/
 
 /* OK:
-Parser::RULE r = Parser::RULE::PRODUCTION{
-	Parser::RULE::PRODUCTION{Parser::_NOT, Parser::RULE(" x ")},
+RULE r = _{
+	_{Parser::_NOT, RULE(" x ")},
 };*/
 
 /* OK:
-Parser::RULE r = Parser::RULE::PRODUCTION{
-	Parser::RULE::PRODUCTION{Parser::_OR, Parser::RULE("one"), Parser::RULE("two"), Parser::RULE("*") },
-	Parser::RULE::PRODUCTION{Parser::_NOT, Parser::RULE("x")},
+RULE r = _{
+	_{Parser::_OR, RULE("one"), RULE("two"), RULE("*") },
+	_{Parser::_NOT, RULE("x")},
 };*/
 
 //!! Regex not yet...:
-//Parser::RULE r = Parser::RULE::PRODUCTION{Parser::RULE("a"), Parser::RULE("_WHITESPACES"), Parser::RULE("b")};
+//RULE r = _{RULE("a"), RULE("_WHITESPACES"), RULE("b")};
 
 //!! FAIL: can't compile
-//Parser::RULE r = Parser::RULE::PRODUCTION{"x"};
-//Parser::RULE r = Parser::RULE(Parser::RULE::PRODUCTION{"x"});
+//RULE r = _{"x"};
+//RULE r = RULE(_{"x"});
 
 // OK:
-//Parser::RULE r = Parser::RULE(Parser::RULE::PRODUCTION{Parser::RULE("x")});
+//RULE r = RULE(_{RULE("x")});
 
 // OK:
-//Parser::RULE r = Parser::RULE::PRODUCTION{Parser::RULE("a"), Parser::RULE("b")};
-//Parser::RULE r = Parser::RULE::PRODUCTION{"a"s, "b"s};
-//Parser::RULE r = Parser::RULE::PRODUCTION{"a"s}; // Seems to be the same: Parser::RULE r{ Parser::RULE::PRODUCTION{"a"s} };
+//RULE r = _{RULE("a"), RULE("b")};
+//RULE r = _{"a"s, "b"s};
+//RULE r = _{"a"s}; // Seems to be the same: RULE r{ _{"a"s} };
 
 //!! FAIL: can't compile
-//Parser::RULE r = Parser::RULE::PRODUCTION{"x"};
+//RULE r = _{"x"};
 
 // OK:
-//Parser::RULE r("x"); auto p = Parser::RULE::PRODUCTION{r};
+//RULE r("x"); auto p = _{r};
 
 //!!---------------------------------------------------------
 //!! FAIL: compiles, but "vector too long"!... :-o
-//!! Parser::RULE r = Parser::RULE::PRODUCTION{"a", "b"};
-//!! auto p         = Parser::RULE::PRODUCTION{"a", "b"};
+//!! RULE r = _{"a", "b"};
+//!! auto p         = _{"a", "b"};
 //!!
 //!! BUT: these don't even compile!...:
-//auto p = Parser::RULE::PRODUCTION{"a", "b", "c"};
-//auto p = Parser::RULE::PRODUCTION{"a", "b"s};
-//auto p = Parser::RULE::PRODUCTION{"a", Parser::RULE("b")};
-//auto p = Parser::RULE::PRODUCTION{Parser::RULE("a"), "b"};
+//auto p = _{"a", "b", "c"};
+//auto p = _{"a", "b"s};
+//auto p = _{"a", RULE("b")};
+//auto p = _{RULE("a"), "b"};
 //!!---------------------------------------------------------
 
-//!!REGEX... /[\\p{Z}]/u
-auto sp = Parser::RULE("_WHITESPACE"),
-Parser::RULE r = Parser::RULE::PRODUCTION{
-	Parser::RULE::PRODUCTION{Parser::RULE("a"), sp, Parser::RULE("b")},
-};
+// OK:
+RULE r = _{ _{"a", " ", "b"} };
+
+/*
+auto sp = ATOM(" "); //!!RULE("_WHITESPACE"); //!!NEED REGEX... until that, it's the literal "/[\\p{Z}]/u"
+RULE r = _{
+	_{"a"s, sp, "b"s},
+};*/
 
 //!! FAIL: can't compile
-//Parser::RULE r = Parser::RULE::PRODUCTION{"_WHITESPACE", Parser::RULE::PRODUCTION{"a", "b"}, "_WHITESPACE"};
+//RULE r = _{"_WHITESPACE", _{"a", "b"}, "_WHITESPACE"};
 
 //!! "Ambiguous"...:
-//	Parser::RULE g1 = RULE({Parser::RULE("_WHITESPACES"), Parser::RULE("bingo"), Parser::RULE("_WHITESPACES"});
-//	Parser::RULE g2 = {Parser::_SEQ, "one", Parser::RULE(Parser::_NIL)};
+//	RULE g1 = RULE({RULE("_WHITESPACES"), RULE("bingo"), RULE("_WHITESPACES"});
+//	RULE g2 = {Parser::_SEQ, "one", RULE(Parser::_NIL)};
 
 		r.DUMP();
 		Parser p(r);
