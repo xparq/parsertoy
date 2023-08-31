@@ -1,4 +1,5 @@
-﻿/*****************************************************************************
+﻿#ifndef _PARSERTOY_
+/*****************************************************************************
   A simplistic recursive descent parser for simple, ad-hoc tasks
   0.5++
 
@@ -18,6 +19,10 @@
   TODO:
 
   - regex
+  - _END: To reject inputs with extra cruft after a (full) match, there should
+     be an _END rule or pattern... So, RULE or NAMED_PATTERN?... (Note this is
+     much like a regex $. Seems like a RULE OP then, but it can also as well be
+     a "virtual" (non-consuming) named pattern, like _EMPTY (or any others).)
  *****************************************************************************/
 
 /*!! REMINDER for pcre2: https://stackoverflow.com/questions/32580066/using-pcre2-in-a-c-project
@@ -56,13 +61,19 @@ pcre2_code *re = pcre2_compile(pattern, PCRE2_ZERO_TERMINATED,
 	using std::cerr, std::cout, std::endl;
 #endif
 
+//!!
+//!! My plain, undecorated macros conflict with the Windows headers (included by DocTest), and who knows what... :-/
+//!!
+
 #define CONST constexpr static auto
 #define OUT
 #define FALLTHROUGH // For switch cases with intentionally no `break;`
+/*
 #define IGNORE // To silence unused fn. arg warnings. Usage: IGNORE arg1, arg2;
                // This macro can't just be [[maybe_unused]], unfortunately. :)
                // MSVC is fine with just a var list, and so was GCC 12 -Wall, but v13
                // started complaining about "left operand of comma operator has no effect".
+*/
 
 //! For variadic macros, e.g. for calling std::format(...):
 //!
@@ -206,9 +217,11 @@ struct RULE
 	// Construction...
 	RULE(const ATOM& atom);
 	RULE(const char* atom) : RULE(string(atom)) {} // C++ will do all things evil with autoconversions, but not this, so... added.
+	                                               // Also, this should stop the bizarra "vector too long" range
+	                                               // misinterpretation errors (with arrays of 2 items), too, as a bonus!
 	RULE(OPCODE opcode): type(OP), opcode(opcode) {}
 	RULE(const PRODUCTION& expr): type(PROD), prod(expr) {
-DBG("RULE::ctor(PROD)...");
+//DBG("RULE::ctor(PROD)...");
 		assert(prod.size() == expr.size());
 		if (prod.size()) assert(expr[0].type == prod[0].type);
 //DBG("RULE::ctor(PROD) done.");
@@ -223,7 +236,7 @@ DBG("RULE::ctor(PROD)...");
 private:
 	void _set_nil() { type = NIL; d_name = "NIL"; }
 	void _destruct() {
-DBG("~RULE (type == {})...", (int)type);
+//DBG("~RULE (type == {})...", (int)type);
 //DBG("~RULE destroying:"); DUMP();
 		assert (type != _DESTROYED_);
 		if      (is_atom()) atom.~string();
@@ -280,7 +293,7 @@ public:
 	// Parser state...
 	//
 	// Input:
-	RULE syntax;
+	const RULE& syntax;
 	string text;
 	size_t text_length;
 	// Diagnostics:
@@ -671,142 +684,5 @@ DBG("static init done");
 
 } // namespace
 
-
-//===========================================================================
-#include <iostream>
-
-int main([[maybe_unused]] int argc, [[maybe_unused]] char** argv)
-{
-	using namespace Parsing;
-
-	try {
-Parser("! dummy parser for static init !"s); //!!Just to setup the static lookup table(s)!... :)
-	//!!??
-	//!!?? WHY IS THERE A COPY EVEN FOR THIS? :-ooo
-	//!!??
-
-// OK:
-//RULE r = Parser::ATOM("my atom");
-// OK:
-//auto r_copy = r;
-// OK:
-//using Ss = std::vector<string>; Ss s = {"a"};
-// OK:
-//using Rs = std::vector<RULE>; Rs r = {RULE("a")};
-// Not needed:
-//using Rs = std::vector<RULE>; Rs r = initializer_list<RULE>({RULE("a")});
-// OK:
-//RULE r = {RULE("a")};
-
-//!! FAIL: ctor ambiguous etc.:
-//RULE r = {RULE("a"), RULE("b")};
-//RULE r = initializer_list<RULE>({RULE("a"), RULE("b")});
-
-// OK:
-//RULE r = _{RULE("a"), RULE(" "), RULE("b")};
-
-// OK:
-//RULE r = _{Parser::_MANY, RULE("x")};
-
-// OK:
-//RULE r = _{Parser::_ANY, RULE("x")};
-
-/* OK:
-RULE r = _{
-	RULE("a"),
-	_{RULE(Parser::_NIL)},
-};*/
-
-/* OK:
-RULE r = _{
-	RULE("a"),
-	_{Parser::_ANY, RULE(" ")},
-	RULE("b"),
-};*/
-
-/* OK:
-RULE r = _{
-	_{Parser::_OR, RULE("one"), RULE("twoe"), RULE("*") },
-};*/
-
-/* OK:
-RULE r = _{
-	_{Parser::_NOT, RULE(" x ")},
-};*/
-
-/* OK:
-RULE r = _{
-	_{Parser::_OR, RULE("one"), RULE("two"), RULE("*") },
-	_{Parser::_NOT, RULE("x")},
-};*/
-
-//!! Regex not yet...:
-//RULE r = _{RULE("a"), RULE("_WHITESPACES"), RULE("b")};
-
-//!! FAIL: can't compile
-//RULE r = _{"x"};
-//RULE r = RULE(_{"x"});
-
-// OK:
-//RULE r = RULE(_{RULE("x")});
-
-// OK:
-//RULE r = _{RULE("a"), RULE("b")};
-//RULE r = _{"a"s, "b"s};
-//RULE r = _{"a"s}; // Seems to be the same: RULE r{ _{"a"s} };
-
-//!! FAIL: can't compile
-//RULE r = _{"x"};
-
-// OK:
-//RULE r("x"); auto p = _{r};
-
-//!!---------------------------------------------------------
-//!! FAIL: compiles, but "vector too long"!... :-o
-//!! RULE r = _{"a", "b"};
-//!! auto p         = _{"a", "b"};
-//!!
-//!! BUT: these don't even compile!...:
-//auto p = _{"a", "b", "c"};
-//auto p = _{"a", "b"s};
-//auto p = _{"a", RULE("b")};
-//auto p = _{RULE("a"), "b"};
-//!!---------------------------------------------------------
-
-// OK:
-RULE r = _{ _{"a", " ", "b"} };
-
-/*
-auto sp = ATOM(" "); //!!RULE("_WHITESPACE"); //!!NEED REGEX... until that, it's the literal "/[\\p{Z}]/u"
-RULE r = _{
-	_{"a"s, sp, "b"s},
-};*/
-
-//!! FAIL: can't compile
-//RULE r = _{"_WHITESPACE", _{"a", "b"}, "_WHITESPACE"};
-
-//!! "Ambiguous"...:
-//	RULE g1 = RULE({RULE("_WHITESPACES"), RULE("bingo"), RULE("_WHITESPACES"});
-//	RULE g2 = {Parser::_SEQ, "one", RULE(Parser::_NIL)};
-
-		r.DUMP();
-		Parser p(r);
-
-		auto text = argc < 2 ? "" : argv[1];
-
-		size_t matched_len = 0xffffffff; auto res = p.parse(text, matched_len);
-		cerr << format("Result: {} (matched: {})", res, matched_len) << "\n";
-
-		cerr << "\n                              >>>>> FINISHED. <<<<<\n\n" << endl;
-
-	} catch(std::runtime_error& x) {
-		cerr << x.what() << "\n";
-		exit(-1);
-	} catch(std::exception& x) {
-		cerr << "- C++ runtime error: " << x.what() << "\n";
-		exit(-2);
-	} catch(...) {
-		cerr << "- UNKNOWN ERROR(S)!...\n";
-		exit(-9);
-	}
-}
+#define _PARSERTOY_
+#endif // _PARSERTOY_

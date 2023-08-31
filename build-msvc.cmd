@@ -11,4 +11,4 @@ set USE_LATEST_SOURCE_AS_DEFAULT=1
 set DEFAULT_MODULE=main
 set DEFAULT_SOURCE_SUFFIX=.cpp
 
-call %~dp0build.cmd :skip_config %*
+call %~dp0build.cmd :skip_config test.cpp %*
