@@ -4,7 +4,7 @@
 ::
 
 set CC=cl
-set DEFAULT_CC_OPTIONS=/nologo /W4 /EHsc /std:c++latest
+set DEFAULT_CC_OPTIONS=/nologo /Wall /EHsc /std:c++latest
 
 :: Sync these with build.cmd:
 set USE_LATEST_SOURCE_AS_DEFAULT=1

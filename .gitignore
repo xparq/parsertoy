@@ -4,5 +4,6 @@
 *.pdb
 *.i
 
+tmp/
 *.tmp
 _scratch_*
