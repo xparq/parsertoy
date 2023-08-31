@@ -15,6 +15,8 @@
     instead of trying to be copyless (and be kinda brittle and ugly, with a
     string pointer). This is still a toy, not for huge texts, anyway.
  
+  - #define COPYLESS_GRAMMAR to avoid copying the grammar rules, in case the
+    life-cycle management of the source objects is of no concern.
  -----------------------------------------------------------------------------
   TODO:
 
@@ -24,6 +26,13 @@
      much like a regex $. Seems like a RULE OP then, but it can also as well be
      a "virtual" (non-consuming) named pattern, like _EMPTY (or any others).)
  *****************************************************************************/
+
+#undef COPYLESS_GRAMMAR //!! Sorry, it doesn't work: there's no sane way to define
+                        //!! grammar rules with the light syntax *AND* without a
+                        //!! plethora of temporary objects...
+			//!! Move-construction should be the way to go; so I seem
+			//!! to have implemented COPYLESS_GRAMMAR for nothing! :)
+
 
 /*!! REMINDER for pcre2: https://stackoverflow.com/questions/32580066/using-pcre2-in-a-c-project
   !! - but there's also that C++ wrapper, jpcre2, or somwthing!...
@@ -116,14 +125,14 @@ pcre2_code *re = pcre2_compile(pattern, PCRE2_ZERO_TERMINATED,
 //=============================================================================
 
 
-
 //---------------------------------------------------------------------------
 #include <string_view>
 	using std::string_view;
 #include <regex>
 	using std::regex;
 	using namespace std::regex_constants; //!! refine (filter)
-#include <functional>
+#include <functional> // function, reference_wrapper, ...
+#include <utility> // move
 #include <optional>
 	using std::optional;
 //!!??#include <variant> // for uniformly AST nodes
@@ -131,7 +140,6 @@ pcre2_code *re = pcre2_compile(pattern, PCRE2_ZERO_TERMINATED,
 #include <unordered_map>
 #include <initializer_list>
 	using std::initializer_list;
-
 
 //---------------------------------------------------------------------------
 namespace Parsing {
@@ -147,8 +155,8 @@ namespace Parsing {
 	// Can be freely extended by users (in sync with the ::$OP map below).
 	using OPCODE = int;
 
-	CONST _ATOM        = OPCODE('#');  // Fake "opcode" for atoms, which are not opeators; only defined for a cleaner Parser::match() impl.
 	CONST _NIL         = OPCODE('0');  // NOOP
+	CONST _ATOM        = OPCODE('#');  // Fake "opcode" for atoms, which are not opeators; only defined for a cleaner Parser::match() impl.
 	CONST _SEQ         = OPCODE(',');
 	CONST _SEQ_IMPLIED = OPCODE(';');  // SEQ can be omitted; it will be implied for a list of rules that don't start with an opcode
 	                                   // (This is to further unify processing: PROD rules all uniformly start with an opcode _internally_.)
@@ -192,88 +200,218 @@ struct RULE
 		USER_LITERAL,
 		OP,
 		PROD,
-
-		_DESTROYED_, // See _copy() and _destruct()! :-o
+		
+		// Disagnostics support (mostly for the C++ hackery)...
+		// See _copy(), _move(), _destruct()!
+		_MOVED_FROM_,
+		_DESTROYED_,  
 	} type;
+
+#ifndef NDEBUG
+	const char* _type_to_cstr(auto t) const {
+		switch (t) {
+		case NIL: return "NIL";
+		case CURATED_REGEX: return "CURATED_REGEX";
+		case CURATED_LITERAL: return "CURATED_LITERAL";
+		case USER_REGEX: return "USER_REGEX";
+		case USER_LITERAL: return "USER_LITERAL";
+		case OP: return "OP";
+		case PROD: return "PROD";
+
+		case _MOVED_FROM_: return "_MOVED_FROM_";
+		case _DESTROYED_: return "_DESTROYED_";
+		default:
+			return "!!BUG: MISSING NAME FOR RULE TYPE!!";
+		}
+	}
+	const char* _type_cstr() const { return _type_to_cstr(type); }
+#endif
 
 	union { //!! variant<ATOM, OPCODE, PRODUCTION> val;
 		ATOM       atom; //!! Should be extended later to support optional name + regex pairs! (See d_name, currently!)
 					//!! Or, actually, better to have patterns as non-atomic types instead (finally)?
 					//!! Also: extend to support precompiled regexes!
 		OPCODE     opcode;
-		PRODUCTION prod;
+
+		// .prod is treated specially: use prod() for (always const) access!
+ 		// Since RULE is in a union, we'd have to copy it no matter what,
+		// because you can't have references in C++ unions. But using
+		// std::reference_wrapper, it could still work...
+#ifdef COPYLESS_GRAMMAR
+		std::reference_wrapper<const PRODUCTION> _prod;
+#else		
+		const PRODUCTION _prod; //! See the const_cast in _copy() to support this constness...
+#endif		
 	};
 
 	string d_name; // symbolic name, if any (e.g. for named patterns) for diagnostics only
+
+	void _set_nil() { type = NIL; d_name = "NIL"; }
+
 
 	//-----------------------------------------------------------
 	// Queries...
 	bool is_atom() const { return type == CURATED_REGEX || type == CURATED_LITERAL
 					|| type == USER_LITERAL || type == USER_REGEX; }
-	bool is_prod() const { return type == PROD && !prod.empty(); }
+	bool is_prod() const { return type == PROD && !prod().empty(); }
 	bool is_opcode() const { return type == OP; }
 
+	const PRODUCTION& prod() const { assert(type == PROD);
+#ifdef COPYLESS_GRAMMAR
+		return _prod.get();
+#else		
+		return _prod;
+#endif		
+	}
+
+
 	//-----------------------------------------------------------
+	// C++ boilerplate...
+
+	//------------------------
 	// Construction...
 	RULE(const ATOM& atom);
-	RULE(const char* atom) : RULE(string(atom)) {} // C++ will do all things evil with autoconversions, but not this, so... added.
+	RULE(const char* atom) : RULE(ATOM(atom)) {} // C++ will do all things evil with autoconversions, but not this, so... added.
 	                                               // Also, this should stop the bizarra "vector too long" range
 	                                               // misinterpretation errors (with arrays of 2 items), too, as a bonus!
-	RULE(OPCODE opcode): type(OP), opcode(opcode) {}
-	RULE(const PRODUCTION& expr): type(PROD), prod(expr) {
-//DBG("RULE::ctor(PROD)...");
-		assert(prod.size() == expr.size());
-		if (prod.size()) assert(expr[0].type == prod[0].type);
-//DBG("RULE::ctor(PROD) done.");
+	RULE(OPCODE opcode): type(OP), opcode(opcode) {
+DBG("RULE::OPCODE-ctor creating [{}] as: {} ('{}')...", (void*)this, opcode, (char)opcode);
 	}
-	// Copy & desctuction...
-	RULE(const RULE& other): type(_DESTROYED_) { _copy(other); }
-	RULE& operator=(const RULE& other) { if (&other != this) { _destruct(); _copy(other); } return *this; }
-	RULE(const RULE&& other) = delete; //!! Shouldn't be deleted, but I'm just tired of it...
+
+	RULE(const PRODUCTION& expr): type(PROD), _prod(expr) { //! Constructs _prod as ref_wrap(expr) in COPYLESS_GRAMMAR mode.
+DBG("RULE::PROD-ctor creating [{}] from type: {}...", (void*)this, expr.empty() ? "<!!BUG? EMPTY PROD!!>" : expr[0]._type_cstr());
+		assert(prod().size() == expr.size());
+		if (prod().size()) assert(expr[0].type == prod()[0].type);
+//DBG("RULE::PROD-ctor creating [{}] done.", (void*)this);
+	}
+	
+	//------------------------
+	// Copy(-construction)...
+	RULE(const RULE& other): type(_DESTROYED_) {
+DBG("RULE::copy-ctor creating [{}] from type: {}...", (void*)this, other._type_cstr());
+		_copy(other); //! Works with COPYLESS_GRAMMAR transparently, because
+		              //! it's a reference_wrapper, which can be rebound!
+//DBG("RULE::copy-ctor creating [{}] from type: {} done.", (void*)this, (int)type);
+	}
+	// Handles COPYLESS_GRAMMAR transparently
+	RULE& operator=(const RULE& other) {
+		assert(type != _DESTROYED_);
+		DBG("RULE assigmnet invoked... Could it be spared?");
+		if (&other != this) {
+			_destruct();
+			_copy(other);
+		} 
+		assert(type != _DESTROYED_);
+		return *this; 
+	}
+
+	//------------------------
+	// Move...
+#ifdef COPYLESS_GRAMMAR
+ 	// Refuse to take references of temporaries!
+	//!! Should be re-enabled, doing copy, with a "smart-destruct" flag to know that `*this` is a copy that can be destructed!
+	RULE(RULE&& tmp) = delete;
+	RULE(PRODUCTION&& expr) = delete;
+	RULE& operator=(RULE&& tmp) = delete;
+#else
+	RULE(RULE&& tmp): type(_DESTROYED_) { _move(std::move(tmp)); }
+	RULE(PRODUCTION&& expr): type(PROD), _prod(expr) { //! Constructs _prod as ref_wrap(expr) in COPYLESS_GRAMMAR mode.
+DBG("RULE::PROD-ctor creating [{}] from type: {}...", (void*)this, expr.empty() ? "<!!BUG? EMPTY PROD!!>" : expr[0]._type_cstr());
+		assert(prod().size() == expr.size());
+		if (prod().size()) assert(expr[0].type == prod()[0].type);
+//DBG("RULE::PROD-ctor creating [{}] done.", (void*)this);
+	}
+
+	RULE& operator=(RULE&& tmp) {
+		DBG("RULE (move-)assigmnet invoked... Could it be spared?");
+		assert(type != _DESTROYED_);
+		assert (&tmp != this);
+		_destruct();
+		_move(std::move(tmp));
+		assert(type != _DESTROYED_);
+		return *this; 
+	}
+#endif
+	//------------------------
+	// Destruction...
 	~RULE() {
+DBG("~RULE destructing [{}] (type: {})...", (void*)this, _type_cstr());
 		_destruct();
 	}
+
 private:
-	void _set_nil() { type = NIL; d_name = "NIL"; }
 	void _destruct() {
-//DBG("~RULE (type == {})...", (int)type);
-//DBG("~RULE destroying:"); DUMP();
+//DBG("RULE::destruc (type: {})...", (int)type); //DUMP();
 		assert (type != _DESTROYED_);
 		if      (is_atom()) atom.~string();
-		else if (type == PROD) prod.~PRODUCTION(); //! Can't use is_prod() here: it's false if empty()!
+#if !defined(COPYLESS_GRAMMAR)
+		else if (type == PROD) _prod.~PRODUCTION(); //! Can't use is_prod() here: it's false if empty()!
+#endif
 		type = _DESTROYED_;
-//DBG("~RULE done.");
+//DBG("RULE::destruct (type: {}) done.", _type_cstr());
 	}
+
 	void _copy(const RULE& other) {
 //DBG("RULE::_copy...");
 		//!! Assumes not being constructed already!
 		assert(type == _DESTROYED_);
+		assert(other.type != _DESTROYED_);
+		assert(other.type != _MOVED_FROM_);
 		type = other.type;
 		if      (is_atom()) new (&atom) ATOM(other.atom);
-		else if (type == PROD) new (&prod) PRODUCTION(other.prod); //! Can't use is_prod() here: it's false if empty()!
+#ifdef COPYLESS_GRAMMAR
+		else if (type == PROD) new (&_prod) decltype(_prod)(other._prod); //! Copying ref_wrap will only bind other's!
+#else
+		else if (type == PROD) new (const_cast<PRODUCTION*>(&_prod)) PRODUCTION(other.prod()); //! Can't use is_prod() here: it's false if empty()!
+#endif
 		else                opcode = other.opcode; // just a number...
 DBG("RULE::_copy (type == {}) done.", (int)type);
 	}
-	void _dump(unsigned level = 0) {
+
+	void _move(RULE&& tmp) {
+//DBG("RULE::_move...");
+		//!! Assumes not being constructed already!
+		assert(type == _DESTROYED_);
+		assert(tmp.type != _DESTROYED_);
+		assert(tmp.type != _MOVED_FROM_);
+		type = tmp.type;
+		if      (is_atom()) new (&atom) ATOM(std::move(tmp.atom));
+#ifdef COPYLESS_GRAMMAR
+		else if (type == PROD) new (&_prod) decltype(_prod)(std::move(tmp._prod)); //!!?? Will this do what I hope?
+		                                                                           //!! I don't think so!...
+#		error RULE::_move called in COPYLESS_GRAMMAR mode!
+#else
+		else if (type == PROD) new (const_cast<PRODUCTION*>(&_prod)) PRODUCTION(std::move(tmp.prod())); //! Can't use is_prod() here: it's false if empty()!
+#endif
+		else                opcode = std::move(tmp.opcode); // just a number...
+		tmp.type = _MOVED_FROM_;
+DBG("RULE::_move (type == {}) done.", (int)type);
+	}
+
+	//-----------------------------------------------------------
+	// Diagnostics...
+	void _dump(unsigned level = 0) const {
 		auto p = [&](auto x, auto... args) { string prefix(level * 2, ' ');
 			cerr << "     " << prefix << x << endl;
 			};
 		if (!level) p("/--------------------------------------------------------------------------\\");
-		p(format("type: {}", (int)type));
+		p(format("type: {} ({})", _type_cstr(), (int)type));
+		if (type == _DESTROYED_)  DBG(" !!! INVALID (DESTROYED) OBJECT !!!");
+		if (type == _MOVED_FROM_) DBG(" !!! INVALID (MOVED-FROM) OBJECT !!!");
 		if (is_atom()) { p(format("\"{}\"", atom));
 		} else if (type == PROD) { //! Can't use is_prod() here: it's false if empty()!
 			p("{");
-			for (auto& r : prod) { r._dump(level + 1); }
+			for (auto& r : prod()) { r._dump(level + 1); }
 			p("}");
-		} else if (type == OP) { p(format("opcode: {}", opcode));
+		} else if (type == OP) { p(format("opcode: {} ('{}')", opcode, char(opcode)));
 		} else if (type == _DESTROYED_) { p("!!!! _DESTROYED_ !!!!");
 		} else p("*** UNKNOWN/INVALID RULE TYPE! ***");
 		if (!level) p("\\--------------------------------------------------------------------------/\n");
 	}
 #ifndef NDEBUG
-	public: void DUMP() { _dump(); }
+	public: void DUMP() const { _dump(); }
 #else
-	public: void DUMP() {}
+	public: void DUMP() const {}
 #endif
 };
 
@@ -293,7 +431,11 @@ public:
 	// Parser state...
 	//
 	// Input:
+#ifdef COPYLESS_GRAMMAR
 	const RULE& syntax;
+#else
+	const RULE syntax;
+#endif	
 	string text;
 	size_t text_length;
 	// Diagnostics:
@@ -385,16 +527,16 @@ private:
 	const OPERATION& prod_handler(const RULE& rule) const
 	{
 		assert(rule.type == RULE::PROD); //! Never asking an opcode-type RULE object directly (it's just an opcode, makes no sense alone)
-		assert(!rule.prod.empty());
+		assert(!rule.prod().empty());
 
 		OPCODE opcode;
 
  		// First item of a "compound" RULE is the op., or else _SEQ is implied.
- 		if (!rule.prod[0].is_opcode()) { // Not an opcode, imply a sequence
+ 		if (!rule.prod()[0].is_opcode()) { // Not an opcode, imply a sequence
 			opcode = _SEQ_IMPLIED; //!! Will expect a headless rule!
 				//!!OPTIM: Shouldn't even be lookup, just return the handler directly!
 		} else {
-			opcode = rule.prod[0].opcode;
+			opcode = rule.prod()[0].opcode;
 		}
 			
 		if (auto it = ops.find(opcode); it != ops.end()) {
@@ -412,7 +554,7 @@ Parser::STRING_MAP Parser::NAMED_PATTERN = {}; // Initialize at least to {}, to 
 //===========================================================================
 
 //---------------------------------------------------------------------------
-RULE::RULE(const string& s)
+RULE::RULE(const ATOM& s)
 // A `string` arg. can mean:
 //   a) symbol: the name of a curated item (either regex or literal)
 //   b) direct ("user") string literal
@@ -420,7 +562,7 @@ RULE::RULE(const string& s)
 // For efficiency, the actual type (`type`) and it's "actual value" (e.g. the
 // regex of a named pattern) is resolved and recorded (cached) here.
 {
-DBG("RULE::ctor(ATOM) for: '{}'...", s);
+DBG("RULE::ATOM-ctor creating [{}] from: \"{}\"...", (void*)this, s);
 
 	if (s.empty()) { _set_nil(); return; }
 
@@ -430,13 +572,13 @@ DBG("RULE::ctor(ATOM) for: '{}'...", s);
 		new (&atom) ATOM(it->second); // Replace the atom name with the actual pattern (that's what that lame `second` is)
 		type = (atom.length() > 1 && atom[0] == '/' and atom[atom.length()-1] == '/')
 			? CURATED_REGEX : CURATED_LITERAL;
-DBG("RULE init with named pattern '{}' (->'{}')", d_name, atom);
+DBG("RULE initialized as named pattern '{}' (->'{}') (type: {})", d_name, atom, _type_cstr());
 	} else {
 //DBG("- named pattern '{}' not found; using it as literal...", s);
 		new (&atom) ATOM(s);
 		type = (atom.length() > 1 && atom[0] == '/' and atom[atom.length()-1] == '/')
 			? USER_REGEX : USER_LITERAL;
-DBG("RULE init with literal '{}'", atom);
+DBG("RULE initialized as string literal '{}' (type: {}).", atom, _type_cstr());
 	}
 
 	if (type == CURATED_REGEX || type == USER_REGEX) {
@@ -560,11 +702,11 @@ DBG("static init done");
 	ops[_SEQ] = [](Parser& p, size_t pos, const RULE& rule, OUT size_t& len) -> bool
 	{
 		assert(rule.is_prod());
-		assert(rule.prod.size() >= 2);
+		assert(rule.prod().size() >= 2);
 
 		len = 0;
 
-		for (auto r = rule.prod.cbegin() + 1; r != rule.prod.cend(); ++r)
+		for (auto r = rule.prod().cbegin() + 1; r != rule.prod().cend(); ++r)
 		{
 			size_t len_add;
 			if (!p.match(pos + len, *r, len_add)) return false;
@@ -577,10 +719,10 @@ DBG("static init done");
 	ops[_SEQ_IMPLIED] = [](Parser& p, size_t pos, const RULE& rule, OUT size_t& len) -> bool
 	{
 		assert(rule.is_prod());
-		assert(rule.prod.size() >= 1);
+		assert(rule.prod().size() >= 1);
 
 		len = 0;
-		for (auto r = rule.prod.cbegin(); !(r == rule.prod.cend()); ++r)
+		for (auto r = rule.prod().cbegin(); !(r == rule.prod().cend()); ++r)
 		{
 			size_t len_add;
 			if (!p.match(pos + len, *r, len_add)) return false;
@@ -592,9 +734,9 @@ DBG("static init done");
 	//-------------------------------------------------------------------
 	ops[_OR]  = [](Parser& p, size_t pos, const RULE& rule, OUT size_t& len) -> bool
 	{
-		assert(rule.prod.size() >= 3);
+		assert(rule.prod().size() >= 3);
 
-		for (auto r = rule.prod.cbegin() + 1; r != rule.prod.cend(); ++r)
+		for (auto r = rule.prod().cbegin() + 1; r != rule.prod().cend(); ++r)
 		{
 			if (p.match(pos, *r, len)) {
 				return true;
@@ -609,9 +751,9 @@ DBG("static init done");
 	// Could also be _ANY{1}
 	ops[_OPT] = [](Parser& p, size_t pos, const RULE& rule, OUT size_t& len) -> bool
 	{
-		assert(rule.prod.size() == 2);
+		assert(rule.prod().size() == 2);
 
-		if (!p.match(pos, rule.prod[1], len)) {
+		if (!p.match(pos, rule.prod()[1], len)) {
 			len = 0;
 		}
 		return true;
@@ -620,10 +762,10 @@ DBG("static init done");
 	//-------------------------------------------------------------------
 	ops[_ANY] = [](Parser& p, size_t pos, const RULE& rule, OUT size_t& len) -> bool
 	{
-		assert(rule.prod.size() == 2);
+		assert(rule.prod().size() == 2);
 
 		len = 0;
-		auto const& r = rule.prod[1];
+		auto const& r = rule.prod()[1];
 		do {
 			size_t len_add;
 			if (!p.match(pos + len, r, len_add)) {
@@ -643,10 +785,10 @@ DBG("static init done");
 	//-------------------------------------------------------------------
 	ops[_MANY] = [](Parser& p, size_t pos, const RULE& rule, OUT size_t& len) -> bool
 	{
-		assert(rule.prod.size() == 2);
+		assert(rule.prod().size() == 2);
 
 		len = 0;
-		auto const& r = rule.prod[1];
+		auto const& r = rule.prod()[1];
 		bool at_least_one_match = false;
 		do {
 			size_t len_add;
@@ -668,9 +810,9 @@ DBG("static init done");
 	//-------------------------------------------------------------------
 	ops[_NOT] = [](Parser& p, size_t pos, const RULE& rule, OUT size_t& len) -> bool
 	{
-		assert(rule.prod.size() == 2);
+		assert(rule.prod().size() == 2);
 
-		if (p.match(pos, rule.prod[1], len)) {
+		if (p.match(pos, rule.prod()[1], len)) {
 			return false;
 		} else {
 			return true;

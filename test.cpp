@@ -1,3 +1,4 @@
+//#define COPYLESS_GRAMMAR
 #include "parser.hpp"
 
 #define DOCTEST_CONFIG_IMPLEMENT
@@ -31,13 +32,17 @@ using namespace Parsing;
 // "Global placeholder" for the test cases to "export" to, if they want:
 RULE r = _NIL;
 
+//---------------------------------------------------------------------------
+// TEST CASES
+//---------------------------------------------------------------------------
+
+/*
 
 // Constr. from atom, RULE copy-constr.
 CASE() {
 	r = RULE("my atom"); // ATOM is implied!
 	auto r_copy = r;
 }
-
 CASE() { using Ss = std::vector<string>; Ss s = {"a"}; }
 
 CASE() { using Rs = std::vector<RULE>; Rs r = {RULE("a")}; }
@@ -128,11 +133,14 @@ CASE() {
 CASE() {	r = _{" ", _{"a", "b"}, " "}; }
 CASE() {	r = _{"_WHITESPACE", _{"a", "b"}, "_WHITESPACE"}; }
 
+*/
+
 //!! "Ambiguous"...:
 //	RULE g1 = RULE({RULE("_WHITESPACES"), RULE("bingo"), RULE("_WHITESPACES"});
 //	RULE g2 = {Parser::_SEQ, "one", RULE(Parser::_NIL)}
 
-
+//CASE() {	RULE copy_from_PROD_ctor = _{_NIL}; }
+//CASE() {	RULE PROD_ctor(_{_NIL}); }
 
 //===========================================================================
 int main([[maybe_unused]] int argc, [[maybe_unused]] char** argv)
@@ -149,16 +157,26 @@ int main([[maybe_unused]] int argc, [[maybe_unused]] char** argv)
 
 	TEST.run(); // Run the cases!
 
-// /* "MANUAL" CASES:
+// "MANUAL" CASES:
 
-		r.DUMP();
+#ifdef COPYLESS_GRAMMAR
+//!! The objects assigned to r have all died by now, so copyless can't work this way!...
+#error COPYLESS_GRAMMAR requires RULE objects that outlive their access cases!...
+#endif
+
+//		r.DUMP();
+
+		RULE dummy{ _{"dummy-atom"} };
+		dummy.DUMP();
+
+/*
 		Parser parser(r);
 
 		auto text = argc < 2 ? "" : argv[1];
 
 		size_t matched_len = 0xffffffff; auto res = parser.parse(text, matched_len);
 		cerr << format("Result: {} (matched: {})", res, matched_len) << "\n";
-// */
+*/
 		cerr << "\n                              >>>>> FINISHED. <<<<<\n\n" << endl;
 
 	} catch(std::runtime_error& x) {
