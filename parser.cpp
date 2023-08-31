@@ -80,8 +80,8 @@ pcre2_code *re = pcre2_compile(pattern, PCRE2_ZERO_TERMINATED,
 //! (GCC is OK with that.)
 
 #ifndef NDEBUG
-//#
-#  if defined(_MSC_BUILD)
+//# //!! Such empty preproc. lines throw off GCC's (v13) error reporting line refs! :-o
+#  if defined(_MSC_VER)
 #    define DBG(msg, ...) std::cerr << std::format("DBG> {}", std::format(msg, __VA_ARGS__)) << std::endl
 #  elif defined(__GNUC__)
 #    define DBG(msg, ...) std::cerr << std::format("DBG> {}", std::format(msg __VA_OPT__(,) __VA_ARGS__)) << std::endl
@@ -94,12 +94,18 @@ pcre2_code *re = pcre2_compile(pattern, PCRE2_ZERO_TERMINATED,
 #endif
 
 // Note: ERROR() below is _not_ a debug feature!
-#if defined(_MSC_BUILD)
+#if defined(_MSC_VER)
 #  define ERROR(msg, ...) throw std::runtime_error(std::format("- ERROR: {}", std::format(msg, __VA_ARGS__)))
 #elif defined(__GNUC__)
 #  define ERROR(msg, ...) throw std::runtime_error(std::format("- ERROR: {}", std::format(msg __VA_OPT__(,) __VA_ARGS__)))
 #else
 #  error Unsupported compiler toolset (not MSVC or GCC/CLANG)!
+#endif
+
+
+// Tame MSVC /Wall just a little
+#ifdef _MSC_VER
+#  pragma warning(disable:5045) // "Compiler will insert Spectre mitigation for memory load if /Qspectre switch specified"
 #endif
 //---------------------------------------------------------------------------
 //=============================================================================
@@ -165,13 +171,14 @@ public:
 	CONST _SEQ_IMPLIED = OPCODE(';');  // SEQ can be omitted; it will be implied for a list of rules that don't start with an opcode
 	                                   // (This is to further unify processing: PROD rules all uniformly start with an opcode _internally_.)
 	CONST _OR          = OPCODE('|');  // Expects 2 or more arguments
-	                                   // - note: adding _AND, too, would make little sense ;)
+	                                   // - Note: adding _AND, too, would make little sense, I guess.
+	                                   // Albeit... ->conjunctive grammars, or e.g.: https://stackoverflow.com/questions/2385762/how-do-i-include-a-boolean-and-within-a-regex
+	                                   // (The key is "non-consuming" rules (like regex lookarounds) -- which is not yet supported by RULE directly.)
 	CONST _MANY        = OPCODE('+');  // 1 or more (greedy!); expects 1 argument
 	CONST _ANY         = OPCODE('*');  // 0 or more (greedy!); shortcut to [_OR [_MANY X] EMPTY]; expects 1 argument
-	                                   // - note: "greedy" above means that [A...]A will never match! Be careful!
+	                                   // - Note: "greedy" above means that [A...]A will never match! Be careful!
 	CONST _OPT         = OPCODE('?');  // 0 or 1; expects 1 argument
-	CONST _NOT         = OPCODE('!');  // Expects 1 argument
-	                                   //!!EXPERIMENTAL ONLY! This is tricky with pattern matching... ;)
+	CONST _NOT         = OPCODE('!');  // Expects 1 argument (Beware of using it with patterns!... ;) )
 
 	// Operator functions...
 	struct RULE;
@@ -203,6 +210,7 @@ public:
 
 			_DESTROYED_, // See _copy() and _destruct()! :-o
 		} type;
+
 		union { //!! variant<ATOM, OPCODE, PRODUCTION> val;
 			ATOM       atom; //!! Should be extended later to support optional name + regex pairs! (See d_name, currently!)
 			                 //!! Or, actually, better to have patterns as non-atomic types instead (finally)?
@@ -225,11 +233,10 @@ public:
 		RULE(const ATOM& atom);
 		RULE(OPCODE opcode): type(OP), opcode(opcode) {}
 		RULE(const PRODUCTION& expr): type(PROD), prod(expr) {
-DBG("RULE::ctor(PROD): BEGIN)");
-
+DBG("RULE::ctor(PROD)...");
 			assert(prod.size() == expr.size());
 			if (prod.size()) assert(expr[0].type == prod[0].type);
-DBG("RULE::ctor(PROD): END)");
+//DBG("RULE::ctor(PROD) done.");
 		}
 		// Copy & desctuction...
 		RULE(const RULE& other): type(_DESTROYED_) { _copy(other); }
@@ -241,25 +248,25 @@ DBG("RULE::ctor(PROD): END)");
 	private:
 		void _set_nil() { type = NIL; d_name = "NIL"; }
 		void _destruct() {
-DBG("~RULE: BEGIN (type == {})", (int)type);
+DBG("~RULE (type == {})...", (int)type);
 //DBG("~RULE destroying:"); DUMP();
 			assert (type != _DESTROYED_);
 			if      (is_atom()) atom.~string();
 			else if (type == PROD) prod.~PRODUCTION(); //! Can't use is_prod() here: it's false if empty()!
 			type = _DESTROYED_;
-DBG("~RULE: END");
+//DBG("~RULE done.");
 		}
 		void _copy(const RULE& other) {
-DBG("RULE::_copy: BEGIN)");
+//DBG("RULE::_copy...");
 			//!! Assumes not being constructed already!
 			assert(type == _DESTROYED_);
 			type = other.type;
 			if      (is_atom()) new (&atom) ATOM(other.atom);
 			else if (type == PROD) new (&prod) PRODUCTION(other.prod); //! Can't use is_prod() here: it's false if empty()!
 			else                opcode = other.opcode; // just a number...
-DBG("RULE::_copy: END (type == {})", (int)type);
+DBG("RULE::_copy (type == {}) done.", (int)type);
 		}
-		void _dump(int level = 0) {
+		void _dump(unsigned level = 0) {
 			auto p = [&](auto x, auto... args) { string prefix(level * 2, ' ');
 				cerr << "     " << prefix << x << endl;
 				};
@@ -317,6 +324,9 @@ DBG("RULE::_copy: END (type == {})", (int)type);
 
 	//-------------------------------------------------------------------
 	Parser(const RULE& syntax, int maxnest = DEFAULT_RECURSION_LIMIT);
+	Parser(const Parser& other) = delete;
+	Parser& operator=(const Parser& other) = delete;
+	Parser(Parser&&) = delete;
 
 	//-------------------------------------------------------------------
 	// Convenience front-ends to match(...)
@@ -411,7 +421,8 @@ Parser::RULE::RULE(const string& s)
 // For efficiency, the actual type (`type`) and it's "actual value" (e.g. the
 // regex of a named pattern) is resolved and recorded (cached) here.
 {
-DBG("ATOM CTOR for: '{}'", s);
+DBG("RULE::ctor(ATOM) for: '{}'...", s);
+
 	if (s.empty()) { _set_nil(); return; }
 
 	d_name = s; // Save it as name for diagnostics (even though it's the same as it's value for literals)
@@ -562,7 +573,7 @@ DBG("static init done");
 			if (!p.match(pos + len, *r, len_add)) return false;
 			else len += len_add;
 		}
-		return len;
+		return true;
 	};
 
 	//-------------------------------------------------------------------
@@ -736,7 +747,7 @@ Parser::RULE r = Parser::RULE::PRODUCTION{
 // OK:
 //Parser::RULE r = Parser::RULE(Parser::RULE::PRODUCTION{Parser::RULE("x")});
 
-//OK:
+// OK:
 //Parser::RULE r = Parser::RULE::PRODUCTION{Parser::RULE("a"), Parser::RULE("b")};
 //Parser::RULE r = Parser::RULE::PRODUCTION{"a"s, "b"s};
 //Parser::RULE r = Parser::RULE::PRODUCTION{"a"s}; // Seems to be the same: Parser::RULE r{ Parser::RULE::PRODUCTION{"a"s} };
@@ -744,39 +755,42 @@ Parser::RULE r = Parser::RULE::PRODUCTION{
 //!! FAIL: can't compile
 //Parser::RULE r = Parser::RULE::PRODUCTION{"x"};
 
-//!!
+// OK:
+//Parser::RULE r("x"); auto p = Parser::RULE::PRODUCTION{r};
+
+//!!---------------------------------------------------------
 //!! FAIL: compiles, but "vector too long"!... :-o
-auto p = Parser::RULE::PRODUCTION{"a", "b"};
-Parser::RULE r("");
-//Parser::RULE r = Parser::RULE::PRODUCTION{"a", "b"};
+//!! Parser::RULE r = Parser::RULE::PRODUCTION{"a", "b"};
+//!! auto p         = Parser::RULE::PRODUCTION{"a", "b"};
 //!!
+//!! BUT: these don't even compile!...:
+//auto p = Parser::RULE::PRODUCTION{"a", "b", "c"};
+//auto p = Parser::RULE::PRODUCTION{"a", "b"s};
+//auto p = Parser::RULE::PRODUCTION{"a", Parser::RULE("b")};
+//auto p = Parser::RULE::PRODUCTION{Parser::RULE("a"), "b"};
+//!!---------------------------------------------------------
+
+//!!REGEX... /[\\p{Z}]/u
+auto sp = Parser::RULE("_WHITESPACE"),
+Parser::RULE r = Parser::RULE::PRODUCTION{
+	Parser::RULE::PRODUCTION{Parser::RULE("a"), sp, Parser::RULE("b")},
+};
 
 //!! FAIL: can't compile
 //Parser::RULE r = Parser::RULE::PRODUCTION{"_WHITESPACE", Parser::RULE::PRODUCTION{"a", "b"}, "_WHITESPACE"};
-
-//!! FAIL: compiles, but "vector too long"!... :-o
-/*!!
-Parser::RULE r = Parser::RULE::PRODUCTION{
-	Parser::RULE("_WHITESPACE"),
-	Parser::RULE::PRODUCTION{"a", "b"},
-	Parser::RULE("_WHITESPACE"),
-};
-!!*/
 
 //!! "Ambiguous"...:
 //	Parser::RULE g1 = RULE({Parser::RULE("_WHITESPACES"), Parser::RULE("bingo"), Parser::RULE("_WHITESPACES"});
 //	Parser::RULE g2 = {Parser::_SEQ, "one", Parser::RULE(Parser::_NIL)};
 
 		r.DUMP();
-/*
 		Parser p(r);
 
 		auto text = argc < 2 ? "" : argv[1];
 
 		size_t matched_len = 0xffffffff; auto res = p.parse(text, matched_len);
-
 		cerr << format("Result: {} (matched: {})", res, matched_len) << "\n";
-*/
+
 		cerr << "\n                              >>>>> FINISHED. <<<<<\n\n" << endl;
 
 	} catch(std::runtime_error& x) {
