@@ -8,10 +8,11 @@
 	#undef CONST
 	#undef OUT
 	#undef ERROR
-	#undef ATOM
+	#undef ATOM // Sigh, "ambiguous symbol", for Windows's typedef WORD...
 #include "extern/doctest.h"
 
-#include <iostream> // As long as I use it directly, in addition to DocTest
+#include <iostream>
+	using std::cerr;
 
 using namespace Parsing;
 
@@ -21,20 +22,91 @@ using namespace Parsing;
 \===========================================================================*/
 #define STRINGIFY_2(a) #a
 #define STRINGIFY(a) STRINGIFY_2(a)
-
 #define CONCAT_2(a, b) a##b
-#define CONTAT(a, b) CONCAT_2(a, b)
+#define CONCAT(a, b) CONCAT_2(a, b)
+#define _FIRST_ARG_(x, ...) x
 
-//#define CASE(...) void CONTAT(test_case_,__COUNTER__)()
-#define CASE(...) DOCTEST_TEST_CASE( STRINGIFY(CONTAT(test_case_,__COUNTER__)) )
+#ifndef _Sz_CONFORMANT_PREPROCESSOR
+#error Conformant C++ preprocessor is required for optional test case names!
+#endif
+#define CASE(...) DOCTEST_TEST_CASE( _FIRST_ARG_(__VA_ARGS__ __VA_OPT__(,) STRINGIFY(CONCAT(test_case_,__COUNTER__))) )
+//OLD:
+//#define CASE(...) DOCTEST_TEST_CASE( STRINGIFY(CONCAT(test_case_,__COUNTER__)) )
+//OLDEST:
+//#define CASE(...) void CONCAT(test_case_,__COUNTER__)()
 
 
-// "Global placeholder" for the test cases to "export" to, if they want:
-RULE r = _NIL;
 
 //---------------------------------------------------------------------------
 // TEST CASES
 //---------------------------------------------------------------------------
+
+#define ____ std::cerr << "-----------------------------------------------------------------------------" << std::endl;
+
+// Globals for the test cases to reuse...
+RULE r = _NIL;
+
+CASE("PROD: directly from ATOM-RULE") {
+	string atom = "atom 1";
+	RULE atom_rule{atom};
+	PROD prod{atom_rule}; //! Alas, copy by std::vector, no matter what!
+	                      //!! BUT WHY TWO?!?!?!
+//	RULE rule{prod};
+//	rule.DUMP();
+	____
+	CHECK(!"Why two RULE copies?");
+}
+
+CASE("PROD: implicit from ATOM (-> RULE)") {
+	string atom = "atom 2";
+	PROD prod{atom}; //! Alas, copy by std::vector, no matter what!
+	____
+}
+
+CASE("PROD: move auto-created RULE from cstring literal") {
+	PROD prod{"cstr atom"};
+	____
+	CHECK(!"Why not moved?");
+}
+
+CASE("PROD: move auto-created RULE from std::string literal") {
+	PROD prod{"std::string atom"s};
+	____
+	CHECK(!"Why not moved?");
+}
+/*!!NOT MOVED EVEN WITH EXPLICIT move()
+CASE("PROD: move auto-created RULE from cstring literal") {
+	PROD prod{std::move("cstr atom")};
+	____
+	CHECK(!"Why not moved?");
+}
+
+CASE("PROD: move auto-created RULE from std::string literal") {
+	PROD prod{std::move("std::string atom"s)};
+	____
+	CHECK(!"Why not moved?");
+}
+!!*/
+CASE("PROD: move explicit temporary RULE(NIL)") {
+	PROD prod{RULE(_NIL)};
+	____
+	CHECK(!"Why not moved?");
+}
+
+CASE("PROD: emplace RULE(std::string literal)") {
+	PROD prod; prod.emplace_back("std::string atom"s);
+	____
+//	CHECK(!"Why not moved?");
+}
+
+CASE("RULE: append - smoke test") {
+	RULE rule{""};
+	rule.append(_NOT, "x");
+	____
+//	CHECK(!"Why not moved?");
+}
+
+
 
 /*
 
@@ -151,34 +223,31 @@ int main([[maybe_unused]] int argc, [[maybe_unused]] char** argv)
 
 	try {
 
+	____
 	Parser("! dummy parser for static init !"s); //!!Just to setup the static lookup table(s)!... :)
 		//!! TO TEST OVERALL RULE COPYING, Parser::syntax could be
 		//!! made a value, instead of the current const ref!
 
-	TEST.run(); // Run the cases!
+	____
 
-// "MANUAL" CASES:
+	TEST.run(); // Run the cases!
+	____
 
 #ifdef COPYLESS_GRAMMAR
 //!! The objects assigned to r have all died by now, so copyless can't work this way!...
-#error COPYLESS_GRAMMAR requires RULE objects that outlive their access cases!...
+#pragma message("Warning: COPYLESS_GRAMMAR requires RULE objects that outlive their access cases!...")
 #endif
 
-//		r.DUMP();
-
-		RULE dummy{ _{"dummy-atom"} };
-		dummy.DUMP();
-
 /*
+		r.DUMP();
 		Parser parser(r);
 
 		auto text = argc < 2 ? "" : argv[1];
 
 		size_t matched_len = 0xffffffff; auto res = parser.parse(text, matched_len);
 		cerr << format("Result: {} (matched: {})", res, matched_len) << "\n";
-*/
 		cerr << "\n                              >>>>> FINISHED. <<<<<\n\n" << endl;
-
+*/
 	} catch(std::runtime_error& x) {
 		cerr << x.what() << "\n";
 		exit(-1);

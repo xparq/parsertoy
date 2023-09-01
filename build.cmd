@@ -26,7 +26,7 @@ set DEFAULT_MODULE=main
 set DEFAULT_SOURCE_SUFFIX=.cpp
 
 set CC=cl
-set DEFAULT_CC_OPTIONS=/nologo /W4 /EHsc /std:c++latest 
+set DEFAULT_CC_OPTIONS=/nologo /W4 /EHsc /std:c++latest /Zc:preprocessor
 
 
 ::---------------------------------------------------------------------------

@@ -17,38 +17,47 @@
  
   - #define COPYLESS_GRAMMAR to avoid copying the grammar rules, in case the
     life-cycle management of the source objects is of no concern.
+    Alas, it doesn't really work:
+    a) The PRODUCTION constructs are std::vectors, which do copy whatever we
+        put in there...
+    b) There's no sane way to define the grammar rules without a plethora of
+       temporary objects...
+    c) And grammars are not very big anyway, so... (It just felt so bad, for
+       heap fragmentation, and the churning of dozens of tiny temporary vectors
+       in general...)
+    Move-construction should be the way to go... I seem to have implemented
+    COPYLESS_GRAMMAR for nothing! :)
  -----------------------------------------------------------------------------
   TODO:
 
   - regex
+    For pcre2: https://stackoverflow.com/questions/32580066/using-pcre2-in-a-c-project
+    -> And there's also that C++ wrapper, jpcre2, or something!...
+
+	#define PCRE2_CODE_UNIT_WIDTH 8
+	#include <pcre2.h>
+
+	...
+	PCRE2_SPTR subject = (PCRE2_SPTR) "this"s.c_str();
+	PCRE2_SPTR pattern = (PCRE2_SPTR) "([a-z]+)|\\s"s.c_str();
+	...
+	int errorcode; PCRE2_SIZE erroroffset;
+	pcre2_code *re = pcre2_compile(pattern, PCRE2_ZERO_TERMINATED,
+					PCRE2_ANCHORED | PCRE2_UTF, &errorcode,
+					&erroroffset, NULL);
+
   - _END: To reject inputs with extra cruft after a (full) match, there should
      be an _END rule or pattern... So, RULE or NAMED_PATTERN?... (Note this is
      much like a regex $. Seems like a RULE OP then, but it can also as well be
      a "virtual" (non-consuming) named pattern, like _EMPTY (or any others).)
+  - multi-emplace _prod_append(...); -- and a similar ctor?? (possible?)
+  - RULE("") and RULE(NIL) should just create an empty rule.
  *****************************************************************************/
 
-#undef COPYLESS_GRAMMAR //!! Sorry, it doesn't work: there's no sane way to define
-                        //!! grammar rules with the light syntax *AND* without a
-                        //!! plethora of temporary objects...
-			//!! Move-construction should be the way to go; so I seem
-			//!! to have implemented COPYLESS_GRAMMAR for nothing! :)
-
-
-/*!! REMINDER for pcre2: https://stackoverflow.com/questions/32580066/using-pcre2-in-a-c-project
-  !! - but there's also that C++ wrapper, jpcre2, or somwthing!...
-
-#define PCRE2_CODE_UNIT_WIDTH 8
-#include <pcre2.h>
-
-...
-PCRE2_SPTR subject = (PCRE2_SPTR) "this"s.c_str();
-PCRE2_SPTR pattern = (PCRE2_SPTR) "([a-z]+)|\\s"s.c_str();
-...
-int errorcode; PCRE2_SIZE erroroffset;
-pcre2_code *re = pcre2_compile(pattern, PCRE2_ZERO_TERMINATED, 
-                                PCRE2_ANCHORED | PCRE2_UTF, &errorcode,
-                                &erroroffset, NULL);
-!!*/
+//!! TBD: Force-disable (the anyway useless) COPYLESS_GRAMMAR, if it may cause
+//!!      subtle problems beyond customary object lifetime management issues
+//!!      wrt. references.
+//!! #undef COPYLESS_GRAMMAR
 
 //=============================================================================
 //---------------------------------------------------------------------------
@@ -64,16 +73,14 @@ pcre2_code *re = pcre2_compile(pattern, PCRE2_ZERO_TERMINATED,
 #include <string>
 	using std::string;
 	using namespace std::literals::string_literals;
-
 #ifndef NDEBUG
 #include <iostream>
 	using std::cerr, std::cout, std::endl;
 #endif
 
 //!!
-//!! My plain, undecorated macros conflict with the Windows headers (included by DocTest), and who knows what... :-/
+//!! My plain, undecorated toy macros conflict with the Windows headers (included by DocTest), and who knows what else...
 //!!
-
 #define CONST constexpr static auto
 #define OUT
 #define FALLTHROUGH // For switch cases with intentionally no `break;`
@@ -86,19 +93,25 @@ pcre2_code *re = pcre2_compile(pattern, PCRE2_ZERO_TERMINATED,
 
 //! For variadic macros, e.g. for calling std::format(...):
 //!
-//! MSVC suppresses the extra ',' when no more args... But, it doesn't
-//! understand __VA_OPT__, so the std. c++20
+//! The old MSVC preproc. suppresses the extra ',' when no more args... But, it
+//! doesn't understand __VA_OPT__, so the std. c++20 way of
 //!
 //! __VA_OPT__(,) __VA_ARGS__ approach can't be unified... Welcome to 2023!
 //!
-//! (GCC is OK with that.)
+//! (GCC is OK with that, as is the new MCVC preproc, activated by /Zc:preprocessor)
+#if defined(__GNUC__) \
+	|| defined(_MSC_VER) && (!defined(_MSVC_TRADITIONAL) || !_MSVC_TRADITIONAL)
+#  define _Sz_CONFORMANT_PREPROCESSOR 1
+#elif defined(_MSC_VER) && defined(_MSVC_TRADITIONAL) && _MSVC_TRADITIONAL // Old MS prep.
+#  define _Sz_OLD_MSVC_PREPROCESSOR 1
+#endif
 
 #ifndef NDEBUG
 //# //!! Such empty preproc. lines throw off GCC's (v13) error reporting line refs! :-o
-#  if defined(_MSC_VER)
-#    define DBG(msg, ...) std::cerr << std::format("DBG> {}", std::format(msg, __VA_ARGS__)) << std::endl
-#  elif defined(__GNUC__)
+#  if defined(_Sz_CONFORMANT_PREPROCESSOR)
 #    define DBG(msg, ...) std::cerr << std::format("DBG> {}", std::format(msg __VA_OPT__(,) __VA_ARGS__)) << std::endl
+#  elif defined(_Sz_OLD_MSVC_PREPROCESSOR)
+#    define DBG(msg, ...) std::cerr << std::format("DBG> {}", std::format(msg, __VA_ARGS__)) << std::endl
 #  else
 #    error Unsupported compiler toolset (not MSVC or GCC/CLANG)!
 #  endif
@@ -108,14 +121,13 @@ pcre2_code *re = pcre2_compile(pattern, PCRE2_ZERO_TERMINATED,
 #endif
 
 // Note: ERROR() below is _not_ a debug feature!
-#if defined(_MSC_VER)
-#  define ERROR(msg, ...) throw std::runtime_error(std::format("- ERROR: {}", std::format(msg, __VA_ARGS__)))
-#elif defined(__GNUC__)
+#if defined(_Sz_CONFORMANT_PREPROCESSOR)
 #  define ERROR(msg, ...) throw std::runtime_error(std::format("- ERROR: {}", std::format(msg __VA_OPT__(,) __VA_ARGS__)))
+#elif defined(_Sz_OLD_MSVC_PREPROCESSOR)
+#  define ERROR(msg, ...) throw std::runtime_error(std::format("- ERROR: {}", std::format(msg, __VA_ARGS__)))
 #else
 #  error Unsupported compiler toolset (not MSVC or GCC/CLANG)!
 #endif
-
 
 // Tame MSVC /Wall just a little
 #ifdef _MSC_VER
@@ -183,13 +195,13 @@ namespace Parsing {
 	// Can be freely extended by users (respecting the opcode list above).
 
 
-
-//-------------------------------------------------------------------
+//---------------------------------------------------------------------------
 // Grammar rules...
 //---------------------------------------------------------------------------
 struct RULE
 {
 	// User Grammar rule expression, as a recursive RULE tree
+	//!! Can't define this outside of RULE, sadly. But shipping with a `using RULE::PRODUCTION` can help!
 	using PRODUCTION = std::vector<RULE>;
 
 	enum {
@@ -228,9 +240,13 @@ struct RULE
 #endif
 
 	union { //!! variant<ATOM, OPCODE, PRODUCTION> val;
-		ATOM       atom; //!! Should be extended later to support optional name + regex pairs! (See d_name, currently!)
-					//!! Or, actually, better to have patterns as non-atomic types instead (finally)?
-					//!! Also: extend to support precompiled regexes!
+
+		//!!Well, making it const didn't help with the mysterious double copy at "COPYLESS" creation!...
+		//!! -> TC "PROD: directly from ATOM-RULE"
+		const ATOM atom;    //!! Should be extended later to support optional name + regex pairs! (See d_name, currently!)
+		                    //!! Or, actually, better to have patterns as non-atomic types instead (finally)?
+		                    //!! Also: extend to support precompiled regexes!
+
 		OPCODE     opcode;
 
 		// .prod is treated specially: use prod() for (always const) access!
@@ -240,7 +256,7 @@ struct RULE
 #ifdef COPYLESS_GRAMMAR
 		std::reference_wrapper<const PRODUCTION> _prod;
 #else		
-		const PRODUCTION _prod; //! See the const_cast in _copy() to support this constness...
+		/*const*/ PRODUCTION _prod; //! See the const_cast in _copy() etc. to support constness...
 #endif		
 	};
 
@@ -257,6 +273,7 @@ struct RULE
 	bool is_opcode() const { return type == OP; }
 
 	const PRODUCTION& prod() const { assert(type == PROD);
+
 #ifdef COPYLESS_GRAMMAR
 		return _prod.get();
 #else		
@@ -271,9 +288,12 @@ struct RULE
 	//------------------------
 	// Construction...
 	RULE(const ATOM& atom);
+	RULE(ATOM&& atom);
+	void _init(auto&& s);
 	RULE(const char* atom) : RULE(ATOM(atom)) {} // C++ will do all things evil with autoconversions, but not this, so... added.
 	                                               // Also, this should stop the bizarra "vector too long" range
 	                                               // misinterpretation errors (with arrays of 2 items), too, as a bonus!
+
 	RULE(OPCODE opcode): type(OP), opcode(opcode) {
 DBG("RULE::OPCODE-ctor creating [{}] as: {} ('{}')...", (void*)this, opcode, (char)opcode);
 	}
@@ -284,7 +304,14 @@ DBG("RULE::PROD-ctor creating [{}] from type: {}...", (void*)this, expr.empty() 
 		if (prod().size()) assert(expr[0].type == prod()[0].type);
 //DBG("RULE::PROD-ctor creating [{}] done.", (void*)this);
 	}
-	
+
+#if !defined (COPYLESS_GRAMMAR)
+	template<class... ArgsT>
+	void append(ArgsT&&... args)
+	{
+		int dummy[] [[maybe_unused]] = { 0, (_prod.emplace_back(std::forward<ArgsT>(args)), 0)... };
+	}
+#endif
 	//------------------------
 	// Copy(-construction)...
 	RULE(const RULE& other): type(_DESTROYED_) {
@@ -295,8 +322,8 @@ DBG("RULE::copy-ctor creating [{}] from type: {}...", (void*)this, other._type_c
 	}
 	// Handles COPYLESS_GRAMMAR transparently
 	RULE& operator=(const RULE& other) {
-		assert(type != _DESTROYED_);
 		DBG("RULE assigmnet invoked... Could it be spared?");
+		assert(type != _DESTROYED_);
 		if (&other != this) {
 			_destruct();
 			_copy(other);
@@ -309,20 +336,24 @@ DBG("RULE::copy-ctor creating [{}] from type: {}...", (void*)this, other._type_c
 	// Move...
 #ifdef COPYLESS_GRAMMAR
  	// Refuse to take references of temporaries!
-	//!! Should be re-enabled, doing copy, with a "smart-destruct" flag to know that `*this` is a copy that can be destructed!
+	//!! Could be re-enabled, doing copy, with a "smart-destruct" flag
+	//!! to know that `*this` is now a copy that can be destructed, plus
+	//!! also keeping a whole "spare" value-type _prod ready for this case...
+	//!! IOW: GRAND PITA!...
 	RULE(RULE&& tmp) = delete;
 	RULE(PRODUCTION&& expr) = delete;
 	RULE& operator=(RULE&& tmp) = delete;
 #else
-	RULE(RULE&& tmp): type(_DESTROYED_) { _move(std::move(tmp)); }
-	RULE(PRODUCTION&& expr): type(PROD), _prod(expr) { //! Constructs _prod as ref_wrap(expr) in COPYLESS_GRAMMAR mode.
-DBG("RULE::PROD-ctor creating [{}] from type: {}...", (void*)this, expr.empty() ? "<!!BUG? EMPTY PROD!!>" : expr[0]._type_cstr());
+	RULE(RULE&& tmp) noexcept : type(_DESTROYED_) {
+		_move(std::move(tmp)); }
+	RULE(PRODUCTION&& expr) noexcept : type(PROD), _prod(std::move(expr)) {
+DBG("RULE::PROD-move-ctor creating [{}] from type: {}...", (void*)this, expr.empty() ? "<!!BUG? EMPTY PROD!!>" : expr[0]._type_cstr());
 		assert(prod().size() == expr.size());
 		if (prod().size()) assert(expr[0].type == prod()[0].type);
-//DBG("RULE::PROD-ctor creating [{}] done.", (void*)this);
+//DBG("RULE::PROD-move-ctor creating [{}] done.", (void*)this);
 	}
 
-	RULE& operator=(RULE&& tmp) {
+	RULE& operator=(RULE&& tmp) noexcept {
 		DBG("RULE (move-)assigmnet invoked... Could it be spared?");
 		assert(type != _DESTROYED_);
 		assert (&tmp != this);
@@ -358,7 +389,7 @@ private:
 		assert(other.type != _DESTROYED_);
 		assert(other.type != _MOVED_FROM_);
 		type = other.type;
-		if      (is_atom()) new (&atom) ATOM(other.atom);
+		if      (is_atom()) new (const_cast<ATOM*>(&atom)) ATOM(other.atom);
 #ifdef COPYLESS_GRAMMAR
 		else if (type == PROD) new (&_prod) decltype(_prod)(other._prod); //! Copying ref_wrap will only bind other's!
 #else
@@ -369,17 +400,19 @@ DBG("RULE::_copy (type == {}) done.", (int)type);
 	}
 
 	void _move(RULE&& tmp) {
+#ifdef COPYLESS_GRAMMAR
+		ERROR("BUG? RULE::_move called in COPYLESS_GRAMMAR mode!"); // See below...
+#endif
 //DBG("RULE::_move...");
 		//!! Assumes not being constructed already!
 		assert(type == _DESTROYED_);
 		assert(tmp.type != _DESTROYED_);
 		assert(tmp.type != _MOVED_FROM_);
 		type = tmp.type;
-		if      (is_atom()) new (&atom) ATOM(std::move(tmp.atom));
+		if      (is_atom()) new (const_cast<ATOM*>(&atom)) ATOM(std::move(tmp.atom));
 #ifdef COPYLESS_GRAMMAR
 		else if (type == PROD) new (&_prod) decltype(_prod)(std::move(tmp._prod)); //!!?? Will this do what I hope?
 		                                                                           //!! I don't think so!...
-#		error RULE::_move called in COPYLESS_GRAMMAR mode!
 #else
 		else if (type == PROD) new (const_cast<PRODUCTION*>(&_prod)) PRODUCTION(std::move(tmp.prod())); //! Can't use is_prod() here: it's false if empty()!
 #endif
@@ -414,7 +447,6 @@ DBG("RULE::_move (type == {}) done.", (int)type);
 	public: void DUMP() const {}
 #endif
 };
-
 
 
 //---------------------------------------------------------------------------
@@ -554,7 +586,15 @@ Parser::STRING_MAP Parser::NAMED_PATTERN = {}; // Initialize at least to {}, to 
 //===========================================================================
 
 //---------------------------------------------------------------------------
-RULE::RULE(const ATOM& s)
+RULE::RULE(const ATOM& s) {
+DBG("RULE::ATOM-copy-ctor creating [{}] from '{}'...", (void*)this, s);
+	_init(s);
+}
+RULE::RULE(ATOM&& s)      {
+DBG("RULE::ATOM-move-ctor creating [{}] from '{}'...", (void*)this, s);
+	_init(s);
+}
+void RULE::_init(auto&& s)
 // A `string` arg. can mean:
 //   a) symbol: the name of a curated item (either regex or literal)
 //   b) direct ("user") string literal
@@ -562,20 +602,20 @@ RULE::RULE(const ATOM& s)
 // For efficiency, the actual type (`type`) and it's "actual value" (e.g. the
 // regex of a named pattern) is resolved and recorded (cached) here.
 {
-DBG("RULE::ATOM-ctor creating [{}] from: \"{}\"...", (void*)this, s);
+DBG("RULE::_init from: \"{}\"...", s);
 
 	if (s.empty()) { _set_nil(); return; }
 
 	d_name = s; // Save it as name for diagnostics (even though it's the same as it's value for literals)
 
 	if (auto it = Parser::NAMED_PATTERN.find(s); it != Parser::NAMED_PATTERN.end()) {
-		new (&atom) ATOM(it->second); // Replace the atom name with the actual pattern (that's what that lame `second` is)
+		new (const_cast<ATOM*>(&atom)) ATOM(it->second); // Replace the atom name with the actual pattern (that's what that lame `second` is)
 		type = (atom.length() > 1 && atom[0] == '/' and atom[atom.length()-1] == '/')
 			? CURATED_REGEX : CURATED_LITERAL;
 DBG("RULE initialized as named pattern '{}' (->'{}') (type: {})", d_name, atom, _type_cstr());
 	} else {
 //DBG("- named pattern '{}' not found; using it as literal...", s);
-		new (&atom) ATOM(s);
+		new (const_cast<ATOM*>(&atom)) ATOM(s);
 		type = (atom.length() > 1 && atom[0] == '/' and atom[atom.length()-1] == '/')
 			? USER_REGEX : USER_LITERAL;
 DBG("RULE initialized as string literal '{}' (type: {}).", atom, _type_cstr());
@@ -821,8 +861,11 @@ DBG("static init done");
 
 } // ctor
 
-	// A little painkiller for grammar-building:
-	using _ = RULE::PRODUCTION;
+	// Some painkillers for grammar-building:
+	using PROD = RULE::PRODUCTION;
+	using _    = RULE::PRODUCTION; // Even this! ;) For init lists, like = _{ ... _{...} }
+	                               // But this isn't OK for declaring PROD vars, so keeping both.
+
 
 } // namespace
 
