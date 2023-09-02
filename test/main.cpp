@@ -1,5 +1,5 @@
 //#define COPYLESS_GRAMMAR
-#include "parser.hpp"
+#include "../parser.hpp"
 
 #define DOCTEST_CONFIG_IMPLEMENT
 	//!!
@@ -9,7 +9,7 @@
 	#undef OUT
 	#undef ERROR
 	#undef ATOM // Sigh, "ambiguous symbol", for Windows's typedef WORD...
-#include "extern/doctest.h"
+#include "../extern/doctest.h"
 
 #include <iostream>
 	using std::cerr;
@@ -227,11 +227,26 @@ CASE("regex smoke test") {
 	CHECK(result);
 }
 
-CASE("regex backslash") {
+CASE("regex curated backslash") {
 	auto p = Parser(_{"_BACKSLASH"});
 	CHECK((p.parse("\\") && !p.parse("/") && !p.parse(" \\")));
 }
 
+CASE("regex curated tab") { // Used to be finicky, for no good reason
+	CHECK(Parser(_{"_TAB"}).parse("\t"));
+}
+
+CASE("regex curated single chars") {
+	auto p = Parser(_{
+		"_TAB"        ,
+		"_SPACE"      ,
+		"_QUOTE"      ,
+		"_APOSTROPHE" ,
+		"_SLASH"      ,
+		"_BACKSLASH"  ,
+	});
+	CHECK(p.parse("\t \"'/\\"));
+}
 
 
 //===========================================================================

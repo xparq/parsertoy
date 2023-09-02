@@ -1,19 +1,18 @@
 ﻿#ifndef _PARSERTOY_
 /*****************************************************************************
-  A simplistic recursive descent parser for simple, ad-hoc tasks
-  0.5++
+  A simplistic recursive descent parser for one-liners & other small jobs
 
   NOTE:
 
-  - This is currrently just a funny, inconvenient and crippled "reimplementation"
-    of dumbed-down regexes, using regexes! ;)
+  - This is basically just a funny, inconvenient and crippled "reimplementation"
+    of dumbed-down regexes -- using regexes. ;)
 
-    I guess the main purpose should be actually building an AST, and/or calling
-    user callbacks on matching constructs...
+    Well, the main purpose would be actually building an AST, and supporting
+    user hooks etc. for matching constructs... Just haven't got 'round to it yet.
 
-  - Decided to copy the source text and be clean and robust (e.g. for threads),
-    instead of trying to be copyless (and be kinda brittle and ugly, with a
-    string pointer). This is still a toy, not for huge texts, anyway.
+  - Copies the source text to be a little more clean & robust (for threading),
+    instead of trying to be copyless (and be kinda brittle and ugly, with
+    pointers). It's still a toy, not for huge texts, after all.
  
   - #define COPYLESS_GRAMMAR to avoid copying the grammar rules, in case the
     life-cycle management of the source objects is of no concern.
@@ -21,17 +20,17 @@
     a) The PRODUCTION constructs are std::vectors, which do copy whatever we
         put in there...
     b) There's no sane way to define the grammar rules without a plethora of
-       temporary objects...
+       temporaries (to copy)...
     c) And grammars are not very big anyway, so... (It just felt so bad, for
-       heap fragmentation, and the churning of dozens of tiny temporary vectors
-       in general...)
+       heap fragmentation etc. and the churning of dozens of tiny temporary
+       vectors, in general...)
     Move-construction should be the way to go... I seem to have implemented
     COPYLESS_GRAMMAR for nothing! :)
  -----------------------------------------------------------------------------
   TODO:
 
   - RULE -> std::variant. I think I've earned it... Then finally (precompiled)
-    regex objects could also kept there easily.
+    regex objects could be kept there (more) easily.
 
   - Add _END to reject inputs with extra cruft after a full match.
     Either rule or pattern... So, RULE or NAMED_PATTERN?... (Note this is
@@ -112,18 +111,37 @@
 #endif
 
 #ifndef NDEBUG
-//# //!! Such empty preproc. lines throw off GCC's (v13) error reporting line refs! :-o
+//# //!! These empty preproc. lines would throw off GCC's error reporting line refs! :-o
 #  if defined(_Sz_CONFORMANT_PREPROCESSOR)
 #    define DBG(msg, ...) std::cerr << std::format("DBG> {}", std::format(msg __VA_OPT__(,) __VA_ARGS__)) << std::endl
+     // Same as DBG(), but with no trailing \n (for continuation lines)
+#    define DBG_(msg, ...) std::cerr << std::format("DBG> {}", std::format(msg __VA_OPT__(,) __VA_ARGS__))
+     // Continuation lines -- same as DBG(), but without the DBG prefix
+#    define _DBG(msg, ...) std::cerr << std::format(msg __VA_OPT__(,) __VA_ARGS__) << std::endl
+     // Line fragment -- neither DBG prefix, no trailing \n
+#    define _DBG_(msg, ...) std::cerr << std::format(msg __VA_OPT__(,) __VA_ARGS__)
 #  elif defined(_Sz_OLD_MSVC_PREPROCESSOR)
 #    define DBG(msg, ...) std::cerr << std::format("DBG> {}", std::format(msg, __VA_ARGS__)) << std::endl
+#    define DBG_(msg, ...) std::cerr << std::format("DBG> {}", std::format(msg, __VA_ARGS__))
+#    define _DBG(msg, ...) std::cerr << std::format(msg, __VA_ARGS__) << std::endl
+#    define _DBG_(msg, ...) std::cerr << std::format(msg, __VA_ARGS__)
 #  else
 #    error Unsupported compiler toolset (not MSVC or GCC/CLANG)!
 #  endif
+
+#  define DBG_DEFAULT_TRIM_LEN 30
+   // Trim length is ignored as yet, just using the default:
+   #define DBG_TRIM(str, ...) (std::string_view(str).length() > DBG_DEFAULT_TRIM_LEN - 3 ? \
+		(std::string(std::string_view(str).substr(0, DBG_DEFAULT_TRIM_LEN - 3))) + "..." : \
+		str)
 //#
 #else
 #  define DBG(msg, ...)
+#  define DBG_(msg, ...)
+#  define DBG_(msg, ...)
+#  define DBG_TRIM(str, ...)
 #endif
+
 
 // Note: ERROR() below is _not_ a debug feature!
 #if defined(_Sz_CONFORMANT_PREPROCESSOR)
@@ -633,7 +651,7 @@ DBG("RULE::_init from: \"{}\"...", s);
 
 		new (const_cast<ATOM*>(&atom)) ATOM(pattern); // Replace the atom name with the actual pattern (that's what that lame `second` is)
 
-DBG("RULE initialized as named pattern '{}' (->'{}') (type: {})", d_name, atom, _type_cstr());
+DBG("RULE initialized as named pattern '{}' ('{}') (type: {})", d_name, atom, _type_cstr());
 //cerr << "\n"; //!!SEE: study/ms-terminal-bug!!
 
 	} else {
@@ -687,29 +705,29 @@ Parser::Parser(const RULE& syntax, int maxnest/* = DEFAULT_RECURSION_LIMIT*/):
 		// even use mbstring any more!])
 		// NOTE: PCRE *is* UNICODE-aware! --> http://pcre.org/original/doc/html/pcreunicode.html
 
-#define PATTERN(name, rx) {name, rx}
+#define PATTERN(name, rx) {name, "/^" rx "/"} // ".*" added to allow using std::regex_match for left-anchored partial matching!
 //#define PATTERN(name, rx) {name, REGEX(rx, std::regex::extended)}
 		assert(NAMED_PATTERN.empty()); // This won't prevent the C++ static init fiasco, but at least we can have a spectacle... ;)
 		NAMED_PATTERN = { //!! Alas, no constexpr init for dynamic containers; have to do it here...
-			PATTERN( "_EMPTY"      , "//" ),
-			PATTERN( "_SPACE"      , "/\\s/" ),
-			PATTERN( "_TAB"        , "/\\t/" ),
-			PATTERN( "_QUOTE"      , "/\"/" ),
-			PATTERN( "_APOSTROPHE" , "/'/" ),
-			PATTERN( "_SLASH"      , "/\\//" ),
-			PATTERN( "_BACKSLASH"  , "/\\\\/" ),
-			PATTERN( "_IDCHAR"     , "/[[:word:]]/" ), // [a-zA-Z0-9_]
-			PATTERN( "_ID"         , "/[[:word:]]+/" ),
-			PATTERN( "_DIGIT"      , "/[[:digit:]]]/" ),
-			PATTERN( "_DIGITS"     , "/[[:digit:]]+/" ),
-			PATTERN( "_HEXDIGIT"   , "/[[:xdigit:]]/" ),
-			PATTERN( "_HEXDIGITS"  , "/[[:xdigit:]]+/" ),
-			PATTERN( "_LETTER"     , "/[[:alpha:]]/" ),
-			PATTERN( "_LETTERS"    , "/[[:alpha:]]+/" ),
-			PATTERN( "_ALNUM"      , "/[[:alnum:]]/" ),
-			PATTERN( "_ALNUMS"     , "/[[:alnum:]]+/" ),
-			PATTERN( "_WHITESPACE" , "/[[:space:]]/" ),
-			PATTERN( "_WHITESPACES", "/[[:space:]]+/" ),
+			PATTERN( "_EMPTY"      , "" ),
+			PATTERN( "_SPACE"      , " " ), // No \s, and [\s] didn't match ' ' in POSIX2 "extended") for some reason! :-o
+			PATTERN( "_TAB"        , "\t" ), // No \t or [\t] (at least in POSIX2 "extended"?)
+			PATTERN( "_QUOTE"      , "\"" ), // Not a special char
+			PATTERN( "_APOSTROPHE" , "'" ),
+			PATTERN( "_SLASH"      , "/" ),
+			PATTERN( "_BACKSLASH"  , "\\\\" ),
+			PATTERN( "_IDCHAR"     , "[[:word:]]" ), // Includes '_' (at least in POSIX2 "extended")
+			PATTERN( "_ID"         , "[[:word:]]+" ),
+			PATTERN( "_DIGIT"      , "[[:digit:]]]" ),
+			PATTERN( "_DIGITS"     , "[[:digit:]]+" ),
+			PATTERN( "_HEXDIGIT"   , "[[:xdigit:]]" ),
+			PATTERN( "_HEXDIGITS"  , "[[:xdigit:]]+" ),
+			PATTERN( "_LETTER"     , "[[:alpha:]]" ),
+			PATTERN( "_LETTERS"    , "[[:alpha:]]+" ),
+			PATTERN( "_ALNUM"      , "[[:alnum:]]" ),
+			PATTERN( "_ALNUMS"     , "[[:alnum:]]+" ),
+			PATTERN( "_WHITESPACE" , "[[:space:]]" ),
+			PATTERN( "_WHITESPACES", "[[:space:]]+" ),
 		};
 #undef PATTERN
 
@@ -737,38 +755,63 @@ DBG("static init done");
 		{
 			try {
 				REGEX regx(atom, std::regex::extended); //!!PRECOMPILE!...
+//!!?? C++			REGEX regx(atom, std::regex::extended | std::regex_constants::multiline ); //!!PRECOMPILE!...
 				std::smatch m;
 	//!!?? WTF, C++?	if (std::regex_search(string_view(p.text).substr(pos), m, regx)
 	//!!?? WTF, C++?	if (std::regex_search(p.text.begin(), p.text.begin() + pos, m, regx)
 	//!!?? WTF, C++?	if (std::regex_search(p.text.substr(pos), m, regx)
 	//!!?? WTF, C++?	string_view target = string_view(p.text).substr(pos);
-	//OK:
-				string target      = p.text.substr(pos);
-	//OK:
+	//OK:			string target      = p.text.substr(pos);
+	//			if (std::regex_search(target, m, regx))
 
-				// NOTE: regex_match enforces complete match, so can't
-				// use it to eat some of the target. OTOH, regex_search
-				// matches *anywhere* in the string, so the position of
-				// the result must be manually checked!
-				if (std::regex_search(target, m, regx))
-	//!!??			if (std::regex_search(p.text.cbegin() + pos, p.text.cend() + ptrdiff_t(pos), m, regx))
+				if (std::regex_search(p.text.cbegin() + ptrdiff_t(pos), p.text.cend(), m, regx))
+//				if ( std::regex_match(p.text.cbegin() + ptrdiff_t(pos), p.text.cend(), m, regx))
+					// NOTE: regex_match would enforce a complete (^...$-anchored)
+					// match, so can't be used to eat *some* of the text.
+					// OTOH, regex_search matches *anywhere*, so then the
+					// position of the result must be checked explicitly!
+					//
+					// But this also means that regex_search won't stop
+					// when failing to match at the start, and will go
+					// ahead happily playing with all the possible combinations
+					// in the entire string! Which is basically unacceptable
+					// for larger texts and/or complex grammars...
+					//
+					// So, still using regex_match with a wildcard suffix
+					// of .* would then seem to look viable after all,
+					//!![-- But not here! When precompiling!... :) ]
+					// but then again, there would be a misunderstanding
+					// between it and us about what a "real match" is,
+					// and it would always return the full text length for
+					// everything we consider a partial match...
+					//
+					// OK, let me double-check... maybe regex_search does
+					// support ^ after all... Phew, OK, it does! :)
 				{
-DBG("REGEX /{}/: MATCHED '{}'...", atom, p.text.substr(pos));
-					if (size_t(m.position()) == pos)
+//!! MAAAN, C++... Just can't pass DBG_TRIM to format(), as it returns a temporary.
+//!! Have to actually create a var for that. :-/
+{ auto src = DBG_TRIM(p.text.c_str() + pos);
+DBG("REGEX \"{}\": MATCHED \"{}\" with length {}.", atom, src, m.length()); }
+/* OK, since regex_search does support ^, this is no longer required:
+DBG_("REGEX \"{}\": MATCHED '{}' with length {}...", atom, p.text.substr(pos), m.length());
+					if (size_t(m.position()) == 0)
 					{
-DBG("...at the start: ACCEPTED!");
+_DBG(" at the start: ACCEPTED!");
 						len = size_t(m.length());
 						return true;
 					}
-DBG("...in the middle -- REJECTED.");
+_DBG(" in the middle -- REJECTED.");
+*/
+						len = size_t(m.length());
+						return true;
 				}
 				else {
-DBG("REGEX /{}/: ---NOT--- MATCHED '{}'!", atom, p.text.substr(pos));
+DBG("REGEX \"{}\": ---NOT--- MATCHED '{}'!", atom, p.text.substr(pos));
 				}
 			}
 			catch(std::exception& x)
 			{
-				DBG("OP[_ATOM]: REGEX error! ({})", x.what());
+				DBG("OP[_ATOM]: FAILED REGEX \"{}\": ({})", atom, x.what());
 			}
 			return false;
 		}
