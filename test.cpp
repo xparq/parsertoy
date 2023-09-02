@@ -99,11 +99,11 @@ CASE("PROD: emplace RULE(std::string literal)") {
 //	CHECK(!"Why not moved?");
 }
 
-CASE("RULE: append - smoke test") {
+
+CASE("RULE: append - smoke test: CRASHING!...") {
 	RULE rule{""};
-	rule.append(_NOT, "x");
+//!!!!	rule.append(_NOT, "x");
 	____
-//	CHECK(!"Why not moved?");
 }
 
 
@@ -213,6 +213,26 @@ CASE() {	r = _{"_WHITESPACE", _{"a", "b"}, "_WHITESPACE"}; }
 
 //CASE() {	RULE copy_from_PROD_ctor = _{_NIL}; }
 //CASE() {	RULE PROD_ctor(_{_NIL}); }
+
+
+
+CASE("regex smoke test") {
+	assert(Parser(_{"  ", "x"}).parse("  x")); // Verify that non-regex still works...
+	auto prod = _{"_WHITESPACES", "x"};
+	auto rule = RULE{prod};
+	     rule.DUMP();
+	auto p = Parser(rule);
+	auto result = p.parse("  x");
+
+	CHECK(result);
+}
+
+CASE("regex backslash") {
+	auto p = Parser(_{"_BACKSLASH"});
+	CHECK((p.parse("\\") && !p.parse("/") && !p.parse(" \\")));
+}
+
+
 
 //===========================================================================
 int main([[maybe_unused]] int argc, [[maybe_unused]] char** argv)

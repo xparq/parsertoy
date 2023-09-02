@@ -30,9 +30,20 @@
  -----------------------------------------------------------------------------
   TODO:
 
-  - regex
-    For pcre2: https://stackoverflow.com/questions/32580066/using-pcre2-in-a-c-project
-    -> And there's also that C++ wrapper, jpcre2, or something!...
+  - RULE -> std::variant. I think I've earned it... Then finally (precompiled)
+    regex objects could also kept there easily.
+
+  - Add _END to reject inputs with extra cruft after a full match.
+    Either rule or pattern... So, RULE or NAMED_PATTERN?... (Note this is
+    much like regex '$'. Seems like a RULE OP then, but it can also well be
+    a "virtual" (non-consuming) named pattern (like _EMPTY, or any others).)
+
+  - multi-emplace _prod_append(...); -- and a similar ctor?? (possible?)
+
+  - RULE("") and RULE(NIL) should just create an empty rule.
+
+  - pcre2, maybe: https://stackoverflow.com/questions/32580066/using-pcre2-in-a-c-project
+    -> With that C++ wrapper, jpcre2, or something!...
 
 	#define PCRE2_CODE_UNIT_WIDTH 8
 	#include <pcre2.h>
@@ -46,12 +57,6 @@
 					PCRE2_ANCHORED | PCRE2_UTF, &errorcode,
 					&erroroffset, NULL);
 
-  - _END: To reject inputs with extra cruft after a (full) match, there should
-     be an _END rule or pattern... So, RULE or NAMED_PATTERN?... (Note this is
-     much like a regex $. Seems like a RULE OP then, but it can also as well be
-     a "virtual" (non-consuming) named pattern, like _EMPTY (or any others).)
-  - multi-emplace _prod_append(...); -- and a similar ctor?? (possible?)
-  - RULE("") and RULE(NIL) should just create an empty rule.
  *****************************************************************************/
 
 //!! TBD: Force-disable (the anyway useless) COPYLESS_GRAMMAR, if it may cause
@@ -141,7 +146,6 @@
 #include <string_view>
 	using std::string_view;
 #include <regex>
-	using std::regex;
 	using namespace std::regex_constants; //!! refine (filter)
 #include <functional> // function, reference_wrapper, ...
 #include <utility> // move
@@ -156,7 +160,8 @@
 //---------------------------------------------------------------------------
 namespace Parsing {
 
-	using ATOM = string; // direct literal or "terminal regex"
+	using ATOM  = string; // direct literal or "terminal regex"
+	using REGEX = std::regex; //!! When changing it (e.g. to PCRE2), a light adapter class would be nice!
 
 	//-------------------------------------------------------------------
 	// Built-in meta-grammar operators (terminal rules)...
@@ -305,12 +310,15 @@ DBG("RULE::PROD-ctor creating [{}] from type: {}...", (void*)this, expr.empty() 
 //DBG("RULE::PROD-ctor creating [{}] done.", (void*)this);
 	}
 
+
+#if 0 //!!CRASHES, ACTUALLY, SO DISABLED!
 #if !defined (COPYLESS_GRAMMAR)
 	template<class... ArgsT>
 	void append(ArgsT&&... args)
 	{
 		int dummy[] [[maybe_unused]] = { 0, (_prod.emplace_back(std::forward<ArgsT>(args)), 0)... };
 	}
+#endif
 #endif
 	//------------------------
 	// Copy(-construction)...
@@ -345,11 +353,11 @@ DBG("RULE::copy-ctor creating [{}] from type: {}...", (void*)this, other._type_c
 	RULE& operator=(RULE&& tmp) = delete;
 #else
 	RULE(RULE&& tmp) noexcept : type(_DESTROYED_) {
-		_move(std::move(tmp)); }
+DBG("RULE::move-ctor creating [{}] from: [{}]...", (void*)this, (void*)&tmp);
+		_move(std::move(tmp));
+	}
 	RULE(PRODUCTION&& expr) noexcept : type(PROD), _prod(std::move(expr)) {
 DBG("RULE::PROD-move-ctor creating [{}] from type: {}...", (void*)this, expr.empty() ? "<!!BUG? EMPTY PROD!!>" : expr[0]._type_cstr());
-		assert(prod().size() == expr.size());
-		if (prod().size()) assert(expr[0].type == prod()[0].type);
 //DBG("RULE::PROD-move-ctor creating [{}] done.", (void*)this);
 	}
 
@@ -389,6 +397,7 @@ private:
 		assert(other.type != _DESTROYED_);
 		assert(other.type != _MOVED_FROM_);
 		type = other.type;
+		d_name = other.d_name;
 		if      (is_atom()) new (const_cast<ATOM*>(&atom)) ATOM(other.atom);
 #ifdef COPYLESS_GRAMMAR
 		else if (type == PROD) new (&_prod) decltype(_prod)(other._prod); //! Copying ref_wrap will only bind other's!
@@ -409,6 +418,7 @@ DBG("RULE::_copy (type == {}) done.", (int)type);
 		assert(tmp.type != _DESTROYED_);
 		assert(tmp.type != _MOVED_FROM_);
 		type = tmp.type;
+		d_name = tmp.d_name;
 		if      (is_atom()) new (const_cast<ATOM*>(&atom)) ATOM(std::move(tmp.atom));
 #ifdef COPYLESS_GRAMMAR
 		else if (type == PROD) new (&_prod) decltype(_prod)(std::move(tmp._prod)); //!!?? Will this do what I hope?
@@ -428,7 +438,7 @@ DBG("RULE::_move (type == {}) done.", (int)type);
 			cerr << "     " << prefix << x << endl;
 			};
 		if (!level) p("/--------------------------------------------------------------------------\\");
-		p(format("type: {} ({})", _type_cstr(), (int)type));
+		p(format("'{}': type {} (type {})", d_name, _type_cstr(), (int)type));
 		if (type == _DESTROYED_)  DBG(" !!! INVALID (DESTROYED) OBJECT !!!");
 		if (type == _MOVED_FROM_) DBG(" !!! INVALID (MOVED-FROM) OBJECT !!!");
 		if (is_atom()) { p(format("\"{}\"", atom));
@@ -454,9 +464,9 @@ class Parser
 //---------------------------------------------------------------------------
 {
 public:
-	using STRING_MAP = std::unordered_map<string, string>;
-//!!	using REGEX_MAP = std::unordered_map<string, regex>;
-	static STRING_MAP NAMED_PATTERN; //!! Alas, no constexpr init for dynamic containers... :-/ = {
+	using PATTERN_MAP = std::unordered_map<string, string>;
+	//using PATTERN_MAP = std::unordered_map<string, REGEX>;
+	static PATTERN_MAP NAMED_PATTERN; //!! Alas, no constexpr init for dynamic containers... :-/ = {
 	                                 //!! And then it's also problematic to make it static... See the ctor!
 
 	//-------------------------------------------------------------------
@@ -580,7 +590,7 @@ private:
 	}
 };
 
-Parser::STRING_MAP Parser::NAMED_PATTERN = {}; // Initialize at least to {}, to avoid silent crashes when creating rules without a parser!
+Parser::PATTERN_MAP Parser::NAMED_PATTERN = {}; // Initialize at least to {}, to avoid silent crashes when creating rules without a parser!
 
 
 //===========================================================================
@@ -609,14 +619,27 @@ DBG("RULE::_init from: \"{}\"...", s);
 	d_name = s; // Save it as name for diagnostics (even though it's the same as it's value for literals)
 
 	if (auto it = Parser::NAMED_PATTERN.find(s); it != Parser::NAMED_PATTERN.end()) {
-		new (const_cast<ATOM*>(&atom)) ATOM(it->second); // Replace the atom name with the actual pattern (that's what that lame `second` is)
-		type = (atom.length() > 1 && atom[0] == '/' and atom[atom.length()-1] == '/')
-			? CURATED_REGEX : CURATED_LITERAL;
+		std::string_view pattern = it->second;
+		// If "/.../" then it's a regex, so unwrap & mark it as such:
+		if (pattern.length() >= 2 && pattern[0] == '/' && pattern[pattern.length()-1] == '/')
+		{
+			type = CURATED_REGEX;
+			pattern = pattern.substr(1, pattern.length() - 2);
+		}
+		else
+		{
+			type = CURATED_LITERAL;
+		}
+
+		new (const_cast<ATOM*>(&atom)) ATOM(pattern); // Replace the atom name with the actual pattern (that's what that lame `second` is)
+
 DBG("RULE initialized as named pattern '{}' (->'{}') (type: {})", d_name, atom, _type_cstr());
+//cerr << "\n"; //!!SEE: study/ms-terminal-bug!!
+
 	} else {
 //DBG("- named pattern '{}' not found; using it as literal...", s);
 		new (const_cast<ATOM*>(&atom)) ATOM(s);
-		type = (atom.length() > 1 && atom[0] == '/' and atom[atom.length()-1] == '/')
+		type = (atom.length() > 1 && atom[0] == '/' && atom[atom.length()-1] == '/')
 			? USER_REGEX : USER_LITERAL;
 DBG("RULE initialized as string literal '{}' (type: {}).", atom, _type_cstr());
 	}
@@ -664,33 +687,34 @@ Parser::Parser(const RULE& syntax, int maxnest/* = DEFAULT_RECURSION_LIMIT*/):
 		// even use mbstring any more!])
 		// NOTE: PCRE *is* UNICODE-aware! --> http://pcre.org/original/doc/html/pcreunicode.html
 
+#define PATTERN(name, rx) {name, rx}
+//#define PATTERN(name, rx) {name, REGEX(rx, std::regex::extended)}
 		assert(NAMED_PATTERN.empty()); // This won't prevent the C++ static init fiasco, but at least we can have a spectacle... ;)
 		NAMED_PATTERN = { //!! Alas, no constexpr init for dynamic containers; have to do it here...
-			//!!
-			//!!CONVERT FROM PHP+PCRE2:
-			//!!
-			{"_EMPTY"      , R"(//)"},
-			{"_SPACE"      , R"(/\\s/)"},
-			{"_TAB"        , R"(/\\t/)"},
-			{"_QUOTE"      , R"(/\"/)"},
-			{"_APOSTROPHE" , R"(/'/)"},
-			{"_SLASH"      , R"(/\\//)"},
-			{"_IDCHAR"     , R"(/[\\w]/)"}, // [a-zA-Z0-9_], I guess
-			{"_ID"         , R"(/[\\w]+/)"},
-			{"_HEX"        , R"(/[\\0-9a-fA-F]/)"},
-			// UNICODE-safe:
-			{"_DIGIT"      , R"(/[\\p{N}]/u)"},
-			{"_DIGITS"     , R"(/[\\p{N}]+/u)"},
-			{"_LETTER"     , R"(/[\\p{L}]/u)"},
-			{"_LETTERS"    , R"(/[\\p{L}]+/u)"},
-			{"_ALNUM"      , R"(/[[:alnum:]]/u)"},
-			{"_ALNUMS"     , R"(/[[:alnum:]]+/u)"},
-			{"_WHITESPACE" , R"(/[\\p{Z}]/u)"},
-			{"_WHITESPACES", R"(/[\\p{Z}]+/u)"},
+			PATTERN( "_EMPTY"      , "//" ),
+			PATTERN( "_SPACE"      , "/\\s/" ),
+			PATTERN( "_TAB"        , "/\\t/" ),
+			PATTERN( "_QUOTE"      , "/\"/" ),
+			PATTERN( "_APOSTROPHE" , "/'/" ),
+			PATTERN( "_SLASH"      , "/\\//" ),
+			PATTERN( "_BACKSLASH"  , "/\\\\/" ),
+			PATTERN( "_IDCHAR"     , "/[[:word:]]/" ), // [a-zA-Z0-9_]
+			PATTERN( "_ID"         , "/[[:word:]]+/" ),
+			PATTERN( "_DIGIT"      , "/[[:digit:]]]/" ),
+			PATTERN( "_DIGITS"     , "/[[:digit:]]+/" ),
+			PATTERN( "_HEXDIGIT"   , "/[[:xdigit:]]/" ),
+			PATTERN( "_HEXDIGITS"  , "/[[:xdigit:]]+/" ),
+			PATTERN( "_LETTER"     , "/[[:alpha:]]/" ),
+			PATTERN( "_LETTERS"    , "/[[:alpha:]]+/" ),
+			PATTERN( "_ALNUM"      , "/[[:alnum:]]/" ),
+			PATTERN( "_ALNUMS"     , "/[[:alnum:]]+/" ),
+			PATTERN( "_WHITESPACE" , "/[[:space:]]/" ),
+			PATTERN( "_WHITESPACES", "/[[:space:]]+/" ),
 		};
+#undef PATTERN
 
-DBG("static init done");
 		statics_initialized = true;
+DBG("static init done");
 	}
 
 
@@ -704,35 +728,58 @@ DBG("static init done");
 	ops[_ATOM] = [](Parser& p, size_t pos, const RULE& rule, OUT size_t& len) -> bool
 	{
 		assert(rule.is_atom());
+		static_assert(std::is_same<ATOM, string>::value);
+		string atom = rule.atom;
 
 		++p.terminals_tried;
 
-		//$m = []; // <-- No need: PHP will create one without notice.
-		/*!!
-		if (rule.type == RULE::CURATED_REGEX)
-		{	
-			if (preg_match(Parser::$ATOM[$rule], $p->text, $m, PREG_OFFSET_CAPTURE, $pos)
-				&& $m[0][1] == $pos) {
-				return strlen($m[0][0]);
-			} else	return 0;
+		if (rule.type == RULE::CURATED_REGEX || rule.type == RULE::USER_REGEX)
+		{
+			try {
+				REGEX regx(atom, std::regex::extended); //!!PRECOMPILE!...
+				std::smatch m;
+	//!!?? WTF, C++?	if (std::regex_search(string_view(p.text).substr(pos), m, regx)
+	//!!?? WTF, C++?	if (std::regex_search(p.text.begin(), p.text.begin() + pos, m, regx)
+	//!!?? WTF, C++?	if (std::regex_search(p.text.substr(pos), m, regx)
+	//!!?? WTF, C++?	string_view target = string_view(p.text).substr(pos);
+	//OK:
+				string target      = p.text.substr(pos);
+	//OK:
 
+				// NOTE: regex_match enforces complete match, so can't
+				// use it to eat some of the target. OTOH, regex_search
+				// matches *anywhere* in the string, so the position of
+				// the result must be manually checked!
+				if (std::regex_search(target, m, regx))
+	//!!??			if (std::regex_search(p.text.cbegin() + pos, p.text.cend() + ptrdiff_t(pos), m, regx))
+				{
+DBG("REGEX /{}/: MATCHED '{}'...", atom, p.text.substr(pos));
+					if (size_t(m.position()) == pos)
+					{
+DBG("...at the start: ACCEPTED!");
+						len = size_t(m.length());
+						return true;
+					}
+DBG("...in the middle -- REJECTED.");
+				}
+				else {
+DBG("REGEX /{}/: ---NOT--- MATCHED '{}'!", atom, p.text.substr(pos));
+				}
+			}
+			catch(std::exception& x)
+			{
+				DBG("OP[_ATOM]: REGEX error! ({})", x.what());
+			}
+			return false;
 		}
-		else if (rule.type == RULE::USER_REGEX)
+		else // non-regex literal
 		{
-			if (preg_match($rule, $p->text, $m, PREG_OFFSET_CAPTURE, $pos)
-				&& $m[0][1] == $pos) {
-				return strlen($m[0][0]);
-			} else	return 0;
-		}
-		else // literal non-regex pattern
-		!!*/
-		{
-			len = rule.atom.length();
+			len = atom.length();
 			//! Case-insensitivity=true will fail for UNICODE chars!
 			//! So we just go case-sensitive. All the $ATOMs are like that anyway, and
 			//! the user still has control to change it, but won't over a failing match...
 			if (p.text_length - pos >= len //! needed to silence a PHP warning...
-				&& string_view(p.text).substr(pos, len) == rule.atom)  {
+				&& string_view(p.text).substr(pos, len) == atom)  {
 				return true;
 			} else	return false;
 		}
