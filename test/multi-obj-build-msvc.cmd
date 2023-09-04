@@ -10,7 +10,7 @@
 set SOURCE_DIR=%~dp0
 set TMP_DIR=%~dp0..\tmp\
 set EXE_DIR=%TMP_DIR%
-set APPEND_CC_OPTIONS=-Wall
+set APPEND_CC_OPTIONS=-Wall -wd4464
 
 :: Amazingly, pushd will alter (and fuck up!) %~dp0 (appending the dir part
 :: of the script invokation path yet again), so we need to use a copy! :-o

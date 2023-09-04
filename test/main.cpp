@@ -61,14 +61,25 @@ CASE("PROD: T (with implicitly created RULE)") {
 	____
 }
 
+
 CASE("PROD: directly from ATOM-RULE") {
+	____
 	string atom = "atom 1";
 	RULE atom_rule{atom};
-	PROD prod{atom_rule}; //! Alas, copy by std::vector, no matter what!
-	                      //!! BUT WHY TWO?!?!?!
-//	RULE rule{prod};
-//	rule.DUMP();
+	atom_rule.DUMP();
+}
+
+CASE("PROD: directly from ATOM-RULE, plus prod from it") {
 	____
+	string atom = "atom 1";
+	RULE atom_rule{atom};
+
+	PROD prod{atom_rule}; //! Alas, a copy by std::vector, no matter what...
+	                      //!! BUT WHY TWO?!?!?!
+			      //!! There's not even a temporary here! :-o
+			      //!! And even if there was one, I'd expect copy elision
+			      //!! for that, or at least a move! :-o
+	atom_rule.DUMP();
 	CHECK(!"Why two RULE copies?");
 }
 

@@ -160,7 +160,7 @@ CASE("regex curated ID") {
 	CHECK(p.parse("a1_"));
 }
 
-CASE("set line - num - ANY") {
+CASE("set int - ANY") {
 	RULE r = _{
 		_{_ANY, "_WHITESPACE"},
 		"_ID",
@@ -180,7 +180,7 @@ CASE("set line - num - ANY") {
 	CHECK(!p.parse(" = 12"));
 }
 
-CASE("set line - num - OPT") {
+CASE("set int - OPT") {
 	RULE r = _{
 		_{_OPT, "_WHITESPACES"},
 		"_ID",

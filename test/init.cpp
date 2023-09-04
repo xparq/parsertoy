@@ -23,9 +23,6 @@ CASE("error-no-init") {
 	RULE nil = _NIL; // This still works, but is not future-proof!
 	RULE wrong = _{"_WHITESPACE"}; // ERROR without init()!... (No patterns, will be a literal!)
 	Parser p(wrong);
-DBG("ops in the test case: {}", (void*)&ops); // This only makes sense if it's also printed from within
-                             // the Parsing:: header, e.g. from prod_handler()...
-DBG("ops.size in the test case: {}", ops.size());
 	p.parse(" "); // Checks for the failure!
 	CHECK(!p.parse(" ")); // Checks for the failure!
 }

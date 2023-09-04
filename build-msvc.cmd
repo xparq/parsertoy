@@ -10,6 +10,6 @@
 set SOURCE_DIR=test\
 set TMP_DIR=tmp\
 ::set EXE_DIR=.\
-set APPEND_CC_OPTIONS=-Wall
+set APPEND_CC_OPTIONS=-Wall -wd4464
 
 call %~dp0build.cmd %*
