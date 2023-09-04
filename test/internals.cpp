@@ -1,28 +1,11 @@
 #include "../parser.hpp"
 
+//---------------------------------------------------------------------------
+// TEST CASES
+//---------------------------------------------------------------------------
+
 #define DOCTEST_CONFIG_IMPLEMENT_WITH_MAIN
-	#undef CONST
-	#undef OUT
-	#undef ERROR
-	#undef ATOM // Sigh, "ambiguous symbol", for Windows's typedef WORD...
-
-#include "../extern/doctest.h"
-
-/*==========================================================================\
-  TESTING:
-  ...
-\===========================================================================*/
-#define STRINGIFY_2(a) #a
-#define STRINGIFY(a) STRINGIFY_2(a)
-#define CONCAT_2(a, b) a##b
-#define CONCAT(a, b) CONCAT_2(a, b)
-#define _FIRST_ARG_(x, ...) x
-
-#ifndef _Sz_CONFORMANT_PREPROCESSOR
-#error Conformant C++ preprocessor is required for optional test case names!
-#endif
-#define CASE(...) DOCTEST_TEST_CASE( _FIRST_ARG_(__VA_ARGS__ __VA_OPT__(,) STRINGIFY(CONCAT(test_case_,__COUNTER__))) )
-
+#include "./fw/doctest-setup.hpp"
 
 CASE("DBG_TRIM") {
 	//!! MAAAN, C++... Just can't pass DBG_TRIM() to format(), as it can't handle temporaries!
@@ -40,4 +23,27 @@ CASE("DBG_, _DBG_, _DBG") {
 	_DBG(" and a line end.");
 
 	DBG("This should be a new line now.");
+}
+
+// I've seen a strange warning from DOCTEST about the CHECK expr. can't be "too complex"... :-o
+// And I've seen a !false result once reported false, too, but couldn't reproduce it.
+CASE("VERIFY DOCTEST CHECK - 1") {
+	using namespace Parsing;
+	auto res = Parser(_{_NIL}).parse("");
+	DBG("NIL PARSE: {}", res);
+	CHECK(!res);
+}
+
+CASE("VERIFY DOCTEST CHECK - 2") {
+	using namespace Parsing;
+	auto res = Parser(_{_NIL}).parse("");
+	DBG("NIL PARSE: {}", res);
+	CHECK( !Parser(_{_NIL}).parse("") );
+}
+
+CASE("VERIFY DOCTEST CHECK - 3") {
+	using namespace Parsing;
+	auto res = Parser(_{_NIL}).parse("");
+	DBG("NIL PARSE: {}", res);
+	CHECK( !(Parser(_{_NIL}).parse("")) ); // in parens
 }

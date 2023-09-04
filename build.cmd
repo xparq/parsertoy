@@ -2,8 +2,6 @@
 setlocal enableextensions
 setlocal enabledelayedexpansion
 
-rem if _%1_ == _:skip_config_ ( shift /1 & goto :skip_config )
-
 ::
 :: Use: build [option...] [file...] [option...]
 ::
@@ -14,6 +12,7 @@ rem if _%1_ == _:skip_config_ ( shift /1 & goto :skip_config )
 ::
 ::	build *.cpp /Fe:my.exe
 ::	build /Zi main.cpp
+::	build /Zi test/smoke.cpp
 ::	build /GL /Ox main.cpp /link /ltcg /genprofile
 ::	build /GL main.cpp /link /ltcg:pgupdate /useprofile
 ::
@@ -48,7 +47,6 @@ if __==_%CC_OPTIONS%_                   set CC_OPTIONS=^
 ::---------------------------------------------------------------------------
 :: No edits needed below.
 ::---------------------------------------------------------------------------
-rem :skip_config
 
 if __ == _%USE_LATEST_SOURCE_AS_DEFAULT%_ (
 	set default_source=%DEFAULT_SOURCE_DIR%%DEFAULT_MODULE%%DEFAULT_SOURCE_SUFFIX%
@@ -64,8 +62,10 @@ if __ == _%USE_LATEST_SOURCE_AS_DEFAULT%_ (
 if xx == x%1x (
 	set file=%default_source%
 ) else (
-	set file=%1
-	shift /1
+rem !! This is completely misguided here, as the command line may start with comp. options!
+rem	set file=%1
+rem	shift /1
+rem	if not exist !file! set file=%SOURCE_DIR%!file!
 )
 
 

@@ -1,4 +1,3 @@
-//#define COPYLESS_GRAMMAR
 #include "../parser.hpp"
 
 //---------------------------------------------------------------------------
@@ -9,135 +8,8 @@
 // Global env. for the test cases...
 using namespace Parsing;
 
-CASE("RULE: empty from empty str") {
-	RULE r = ""; //!! This happens to work without a prior init(), but not future-proof!
-	                //!! Also, it won't itself call init! 
-	r.DUMP();
-	CHECK(!r.prod().empty()); // Should've been converted to PROD{NIL}, so not empty
-	____
-}
-CASE("RULE: empty from empty PROD 1") {
-	//RULE rule = {}; //! This won't compile, _{} needed!
-	RULE r = _{}; //!! This happens to work without a prior init(), but not future-proof!
-	                 //!! Also, it won't itself call init! 
-	r.DUMP();
-	CHECK(!r.prod().empty()); // Should've been converted to PROD{NIL}, so not empty
-	____
-}
-CASE("RULE: empty from empty PROD 2") {
-	PROD prod{};
-	RULE r{prod};
-	r.DUMP();
-	CHECK(!r.prod().empty()); // Should've been converted to PROD{NIL}, so not empty
-	____
-}
-
-
-CASE("RULE: op = NIL - internal-only use case, but works") {
-	RULE r{_NIL};
-	CHECK((r.is_opcode() && !r.is_prod()));
-	CHECK(r.type == RULE::OP);
-	CHECK(r.opcode == _NIL);
-	____
-}
-CASE("RULE: op = T") {
-	RULE r{_T};
-	CHECK((r.is_opcode() && !r.is_prod()));
-	CHECK(r.type == RULE::OP);
-	CHECK(r.opcode == _T);
-	____
-}
-
-CASE("PROD: empty - TBD...") {
-	PROD prod{};
-}
-
-CASE("PROD: NIL (with implicitly created RULE)") {
-	PROD prod{_NIL};
-	____
-}
-CASE("PROD: T (with implicitly created RULE)") {
-	PROD prod{_T};
-	____
-}
-
-CASE("PROD: directly from ATOM-RULE") {
-	string atom = "atom 1";
-	RULE atom_rule{atom};
-	PROD prod{atom_rule}; //! Alas, copy by std::vector, no matter what!
-	                      //!! BUT WHY TWO?!?!?!
-//	RULE rule{prod};
-//	rule.DUMP();
-	____
-	CHECK(!"Why two RULE copies?");
-}
-
-CASE("PROD: implicit from ATOM (-> RULE)") {
-	string atom = "atom 2";
-	PROD prod{atom}; //! Alas, copy by std::vector, no matter what!
-	____
-}
-
-CASE("PROD: move auto-created RULE from cstring literal") {
-	PROD prod{"cstr atom"};
-	____
-	CHECK(!"Why not moved?");
-}
-
-CASE("PROD: move auto-created RULE from std::string literal") {
-	PROD prod{"std::string atom"s};
-	____
-	CHECK(!"Why not moved?");
-}
-/*!!NOT MOVED EVEN WITH EXPLICIT move()
-CASE("PROD: move auto-created RULE from cstring literal") {
-	PROD prod{std::move("cstr atom")};
-	____
-	CHECK(!"Why not moved?");
-}
-
-CASE("PROD: move auto-created RULE from std::string literal") {
-	PROD prod{std::move("std::string atom"s)};
-	____
-	CHECK(!"Why not moved?");
-}
-!!*/
-CASE("PROD: move explicit temporary RULE(NIL)") {
-	PROD prod{RULE(_NIL)};
-	____
-	CHECK(!"Why not moved?");
-}
-CASE("PROD: emplace RULE(std::string literal)") {
-	PROD prod; prod.emplace_back("std::string atom"s);
-	____
-//	CHECK(!"Why not moved?");
-}
-
-
-CASE("RULE: move from temp prod.") {
-	RULE r{_{_NIL}};
-	r.DUMP();
-	____
-	CHECK(!"Why not moved?");
-}
-
-
-
-/*!!
-CASE("RULE: append - smoke test: CRASHING!...") {
-	RULE r{""};
-//!!!!	r.append(_NOT, "x");
-	____
-}
-!!*/
-
-
 /*
-RULE rule = _{}; //!! This happens to work without a prior init(), but not legal/future-proof!
-                 //!! This is NOT equivalend with creating an OP-type RULE directly with r = _NIL!
-                 //!! This latter is not a supported use case.
-
-//!! Rename r to rule below, to (or) sync with the gloal's actual name!
+RULE r = _NIL; //!!RENAME TO GET IT OUTTA WAY; e.g.: rule = _NIL;
 
 // Constr. from atom, RULE copy-constr.
 CASE() {
@@ -244,13 +116,12 @@ CASE() {	r = _{"_WHITESPACE", _{"a", "b"}, "_WHITESPACE"}; }
 //CASE() {	RULE PROD_ctor(_{_NIL}); }
 
 
-
 CASE("regex smoke test") {
 	assert(Parser(_{"  ", "x"}).parse("  x")); // Verify that non-regex still works...
 	auto prod = _{"_WHITESPACES", "x"};
-	auto r = RULE{prod};
-	     r.DUMP();
-	auto p = Parser(r);
+	auto rule = RULE{prod};
+	     rule.DUMP();
+	auto p = Parser(rule);
 	auto result = p.parse("  x");
 
 	CHECK(result);
@@ -277,6 +148,58 @@ CASE("regex curated single chars") {
 	CHECK(p.parse("\t \"'/\\"));
 }
 
+CASE("regex curated ID") {
+	Parser p(_{"_ID"});
+	CHECK(!p.parse(""));
+	CHECK(!p.parse(" "));
+	CHECK(!p.parse("1"));
+	CHECK(p.parse("_"));
+	CHECK(p.parse("_1"));
+	CHECK(p.parse("a"));
+	CHECK(p.parse("a1"));
+	CHECK(p.parse("a1_"));
+}
+
+CASE("set line - num - ANY") {
+	RULE r = _{
+		_{_ANY, "_WHITESPACE"},
+		"_ID",
+		_{_ANY, "_WHITESPACE"},
+		"=",
+		_{_ANY, "_WHITESPACE"},
+		"_DIGITS"
+	}; r.DUMP();
+	Parser p(r);
+	CHECK(p.parse("option = 1"));
+	CHECK(p.parse("option = 12"));
+	CHECK(p.parse("option=12"));
+	CHECK(p.parse("option   =   12"));
+	CHECK(p.parse(" option = 1"));
+	CHECK(!p.parse("option = "));
+	CHECK(!p.parse("= 12"));
+	CHECK(!p.parse(" = 12"));
+}
+
+CASE("set line - num - OPT") {
+	RULE r = _{
+		_{_OPT, "_WHITESPACES"},
+		"_ID",
+		_{_OPT, "_WHITESPACES"},
+		"=",
+		_{_OPT, "_WHITESPACES"},
+		"_DIGITS"
+	}; r.DUMP();
+	Parser p(r);
+	CHECK(p.parse("option = 1"));
+	CHECK(p.parse("option = 12"));
+	CHECK(p.parse("option=12"));
+	CHECK(p.parse("option   =   12"));
+	CHECK(p.parse("  option = 1"));
+	CHECK(!p.parse("option = "));
+	CHECK(!p.parse("= 12"));
+	CHECK(!p.parse(" = 12"));
+}
+
 
 //===========================================================================
 int main(int argc, char** argv)
@@ -286,8 +209,7 @@ int main(int argc, char** argv)
 	TEST.applyCommandLine(argc, argv);
 
 	try {
-		init(); // Setup lookup table(s) etc.
-		____
+		Parsing::init();
 
 		TEST.run();
 
