@@ -5,19 +5,20 @@
 
   NOTE:
 
-  - This is basically just reimplementing some crippled regex functionality
-    using regexes!... ;)
+  - This is basically just an uninformed reimplementation of some basic
+    regex functionality -- using regexes...
 
     Well, the main purpose would be actually building an AST, and supporting
-    user hooks etc. for matching constructs... Just haven't got 'round to it yet.
+    user hooks etc. for matching constructs, just haven't got 'round to it yet.
 
-  - Copies the source text to be a little more clean & robust (for threading),
-    instead of trying to be copyless (and be kinda brittle and ugly, with
-    pointers). It's still a toy, not for huge texts, after all.
+  - It copies the source text, so that it can be kept a little more clean
+    & robust (e.g. for threading), instead of trying to be copyless (and be
+    kinda brittle and ugly with pointers). It's still a toy, not for huge
+    texts, after all.
 
   - If you need to #include this in more than one translation units, then
-    #define PARSERTOY_DEDUP for each of them, but the first one. (This way
-    the most common use case of only including it once can be the simplest.)
+    #define PARSERTOY_DEDUP for all but the first one. (This way the most
+    common use case of only including it once can be kept the simplest.)
 
 !!DO NOT USE THIS:
   - #define COPYLESS_GRAMMAR to avoid copying the grammar rules, in case the

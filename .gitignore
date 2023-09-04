@@ -7,3 +7,5 @@
 tmp/
 *.tmp
 _scratch_*
+
+session.code-workspace
