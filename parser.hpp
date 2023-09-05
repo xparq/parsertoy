@@ -49,6 +49,7 @@
 #ifdef COPYLESS_GRAMMAR
 #warning COPYLESS_GRAMMAR is not properly implemented yet; disabled. (See #19!)
 #undef COPYLESS_GRAMMAR
+#endif
 
 //=============================================================================
 //---------------------------------------------------------------------------
@@ -238,6 +239,8 @@ struct RULE
 	//!! Can't define this outside of RULE, sadly. But shipping with a `using RULE::PRODUCTION` can help!
 	using PRODUCTION = std::vector<RULE>;
 
+	const RULE* _parent = nullptr; // top-level rule, if no parent
+
 	enum {
 		OP,
 		PROD,
@@ -304,12 +307,18 @@ struct RULE
 	bool is_opcode() const { return type == OP; }
 
 	const PRODUCTION& prod() const { assert(type == PROD);
-
 #ifdef COPYLESS_GRAMMAR
 		return _prod.get();
-#else		
+#else
 		return _prod;
-#endif		
+#endif
+	}
+	PRODUCTION& prod() { assert(type == PROD);
+#ifdef COPYLESS_GRAMMAR
+		return _prod.get();
+#else
+		return _prod;
+#endif
 	}
 
 
@@ -338,6 +347,8 @@ DBG("RULE::PROD-copy-ctor creating [{}] from [{}] as PROD[0].type: {}...",
 		if (prod().empty()) {
 			_destruct(); // Clean up the empty PROD we've just created...
 			_init_as_nil();
+		} else {
+			_relink_parents();
 		}
 //DBG("RULE::PROD-ctor creating [{}] done.", (void*)this);
 	}
@@ -396,6 +407,8 @@ DBG("RULE::PROD-move-ctor created [{}] from PROD[0].type: {}...", (void*)this, p
 		if (prod().empty()) {
 			_destruct(); // Clean up the empty PROD we've just created...
 			_init_as_nil();
+		} else {
+			_relink_parents();
 		}
 	}
 
@@ -437,6 +450,14 @@ DBG("- Setting up empty rule...");
 
 	void _init_atom(auto&& s);
 
+	void _relink_parents() {
+		if (!is_prod()) return;
+		for(auto& r : prod()) {
+			r._parent = this;
+			r._relink_parents();
+		}
+	}
+
 	void _destruct() {
 //DBG("RULE::destruc (type: {})...", _type_cstr()); //DUMP();
 		assert (type != _DESTROYED_);
@@ -463,6 +484,8 @@ DBG("- Setting up empty rule...");
 		else if (type == PROD) new (const_cast<PRODUCTION*>(&_prod)) PRODUCTION(other.prod()); //! Can't use is_prod() here: it's false if empty()!
 #endif
 		else                opcode = other.opcode; // just a number...
+
+		_relink_parents();
 DBG("RULE::_copy (type == {}) done.", _type_cstr());
 	}
 
@@ -486,6 +509,8 @@ DBG("RULE::_copy (type == {}) done.", _type_cstr());
 #endif
 		else                opcode = std::move(tmp.opcode); // just a number...
 		tmp.type = _MOVED_FROM_;
+
+		_relink_parents();
 DBG("RULE::_move (type == {}) done.", _type_cstr());
 	}
 
@@ -517,8 +542,8 @@ DBG("RULE::_move (type == {}) done.", _type_cstr());
 		auto _p  [[maybe_unused]] = [&](auto x, auto... args) {cerr << x << endl; };
 
 		if (!level) p("/------------------------------------------------------------------\\");
-		if (d_name.empty()) p_(format("[{}] {} (type #{}):",      (void*)this, _type_cstr(), (int)type));
-		else                p_(format("[{}] {} (type #{}) '{}':", (void*)this, _type_cstr(), (int)type, d_name));
+		if (d_name.empty()) p_(format("[{} :{}] {} (type #{}):",      (void*)this, (void*)_parent, _type_cstr(), (int)type));
+		else                p_(format("[{} :{}] {} (type #{}) '{}':", (void*)this, (void*)_parent, _type_cstr(), (int)type, d_name));
 		if (type == _DESTROYED_)  p(" !!! INVALID (DESTROYED) OBJECT !!!");
 		if (type == _MOVED_FROM_) p(" !!! INVALID (MOVED-FROM) OBJECT !!!");
 		if (is_atom()) { _p(format(" \"{}\"", atom));
