@@ -23,111 +23,32 @@
     #define PARSERTOY_DEDUP for all but the first one. (This way the most
     common use case of only including it once can be kept the simplest.)
 
-!!DO NOT USE THIS:
-  - #define COPYLESS_GRAMMAR to avoid copying the grammar rules, in case the
-    life-cycle management of the source objects is of no concern. (Albeit the
-    COPYLESS setup API should refuse to take rvalue objects!)
-    Alas, it doesn't really work:
-    a) The PRODUCTION constructs are std::vectors, which do copy whatever we
-        put in there...
-    b) There's no sane way to define the grammar rules directly using C++ code
-       without a plethora of temporaries (to copy)...
-    c) And grammars are not very big anyway, so... (It just felt so bad, for
-       heap fragmentation etc. and the churning of dozens of tiny temporary
-       vectors, in general...)
-    I seem to have implemented COPYLESS_GRAMMAR for nothing! :)
-    Move-construction should be the way to go...
-
  -----------------------------------------------------------------------------
   TODO:
 
-  - COPYLESS_GRAMMAR for empty rules! The problem is that unlike all the other
-    objects that we just reference in this mode, an empty rule is actually
-    a non-empty PROD vector that we need to create ourselves... somehow...
-    A static obj could kinda do, if my ctors could be made constexpr, but
-    std::vector itself is dynamically allocated anyway, and isn't constexpr,
-    I guess...
-
   - Change the ATOM type name, which clashes with he Win32 headers!
-
   - Change the other names, like those of my toy macros, which also
     get stampeded by the Windows headers!
 
   - WTF is wrong with the move semantics?! RULE's move-ctor is never triggered!
-
-  - Solve the lame NAMED_PATTERNS map static init...
-
-    UPDATE: init() is now called implicitly when creating the first ATOM rule!
-            And still also in Parser(), to support OP-only rules, too!
-
-    It's currently done by the Parser ctor (because that at least only has
-    one...), but RULE objects also need it, they can't even be created
-    before having that done... So, it's completely futile in Parser(...),
-    as its syntax argument would get setup from a bunch of temporaries
-    created before the constructor's body had a chance to run...
-
-    Now, it could still be done in its first member init tag (e.g. to
-    set some dummy `initialized` member), but this is too much cryptic
-    trickery just to fight C++ for little benefit; just document that
-    init() must be called for now...
-
-    Also, RULE has a whole bunch of ctors, so where to put it there?... :-/
-
-    (Note: the OP handler map looks like another shared object, but it's
-    just static only to make it a singleton, not for sharing, and that at
-    least is only actually used by Parser!)
-
-    An invariant here is extensibility: currently the pattern IDs are just
-    strings, so that the building blocks (atoms) of grammars can be extended
-    by users seamlessly, either by adding to or changing the NAMED_PATTERNS[]
-    map, or by using string literals that can themselves be regex patterns
-    (not just plain strings).
-
-    This really is shared data across all the RULE objects and parsers etc.,
-    and it can't be a const object.
-
-    (I don't really want to even put its interface into Parser (or RULE),
-    as it would feel less generic (like RULE::PATTERNS or Parser::PATTERNS),
-    and that alone wouldn't solve the static init fiasco anyay.)
-
-  - RULE -> std::variant. I think I've earned it... Then finally (precompiled)
-    regex objects could be kept there (more) easily.
-
-  - Add _END to reject inputs with extra cruft after a full match.
-    Either rule or pattern... So, RULE or NAMED_PATTERNS?... (Note this is
-    much like regex '$'. Seems like a RULE OP then, but it can also well be
-    a "virtual" (non-consuming) named pattern (like _EMPTY, or any others).)
+    UPDATE: it kinda does now, but still not fully understand the cases
+    where it doesn't.
 
   - multi-emplace _prod_append(...); -- and a similar ctor?? (possible?)
 
-  - RULE("") and RULE(NIL) should just create an empty rule.
-
-  - The COPYLESS_GRAMMAR API flavor should refuse to take rvalue objects!
-
-  - pcre2, maybe... Not a priority currently, though.
-    -> https://stackoverflow.com/questions/32580066/using-pcre2-in-a-c-project
-    -> That C++ wrapper, jpcre2, or something!...
-
-	#define PCRE2_CODE_UNIT_WIDTH 8
-	#include <pcre2.h>
-
-	...
-	PCRE2_SPTR subject = (PCRE2_SPTR) "this"s.c_str();
-	PCRE2_SPTR pattern = (PCRE2_SPTR) "([a-z]+)|\\s"s.c_str();
-	...
-	int errorcode; PCRE2_SIZE erroroffset;
-	pcre2_code *re = pcre2_compile(pattern, PCRE2_ZERO_TERMINATED,
-					PCRE2_ANCHORED | PCRE2_UTF, &errorcode,
-					&erroroffset, NULL);
-
-    PCRE *is* UNICODE-aware: http://pcre.org/original/doc/html/pcreunicode.html
+  - RULE("") and RULE(NIL) should create a *valid* empty rule.
+    UPDATE: I think it (kinda?) does now? Not quire sure in which exaxt
+            cases, though.
+    And then there could also be a default ctor then... The reason I still
+    don't have it is I don't want to encourage that. Everything works without
+    it (so far), and there's no obvious benefit.
 
  *****************************************************************************/
 
-//!! TBD: Force-disable (the anyway useless) COPYLESS_GRAMMAR, if it may cause
-//!!      subtle problems beyond customary object lifetime management issues
-//!!      wrt. references.
-//!! #undef COPYLESS_GRAMMAR
+//!! Force-disable (the anyway useless) COPYLESS_GRAMMAR.
+#ifdef COPYLESS_GRAMMAR
+#warning COPYLESS_GRAMMAR is not properly implemented yet; disabled. (See #19!)
+#undef COPYLESS_GRAMMAR
 
 //=============================================================================
 //---------------------------------------------------------------------------
@@ -251,6 +172,8 @@
 namespace Parsing {
 
 	void init(); // Call this first, unless you start with a Parser() constructor!
+
+	CONST EMPTY_STRING = ""s;
 
 	using ATOM  = string; // direct literal or "terminal regex"
 	using REGEX = std::regex; //!! When changing it (e.g. to PCRE2), a light adapter class would be nice!
@@ -629,7 +552,7 @@ public:
 	const RULE& syntax;
 #else
 	const RULE syntax;
-#endif	
+#endif
 	string text;
 	size_t text_length;
 
@@ -678,7 +601,7 @@ public:
 
 	//-------------------------------------------------------------------
 	Parser(const RULE& syntax, int maxnest = DEFAULT_RECURSION_LIMIT):
-		// Sync with _reset()!
+		// Sync with _reset*()!
 		syntax(syntax),
 		loopguard(maxnest),
 		depth_reached(maxnest),
@@ -1158,7 +1081,7 @@ DBG("REGEX \"{}\": ---NOT--- MATCHED '{}'!", atom, p.text.substr(pos));
 		}
 	};
 
-//---------------------------------------------------------------------------
+	//---------------------------------------------------------------------------
 	OPERATORS[_SAVE] = [](Parser& p, size_t pos, const RULE& rule, OUT size_t& len) -> bool
 	{
 		assert(rule.prod().size() >= 2);
@@ -1203,22 +1126,21 @@ DBG("\n\n    SNAPSHOT[{}]: \"{}\"\n\n", name, snapshot);
 DBG("+++ Static init done. +++");
 } // init()
 
+
 const string& Parser::operator[](const string& name) const
 {
-	static string EMPTY = "";
-	try { return named_captures.at(name); }
-	catch(...) { return EMPTY; }
+	try { return named_captures.at(name); } // Not [] to avoid messing up .size()
+	catch(...) { return EMPTY_STRING; }
 }
 
 const string& Parser::operator[](size_t index_of_unnamed) const
 {
-	static string EMPTY = "";
-	try { return unnamed_captures.at(index_of_unnamed); }
-	catch(...) { return EMPTY; }
+	try { return unnamed_captures.at(index_of_unnamed); } // Not [] to avoid messing up .size()
+	catch(...) { return EMPTY_STRING; }
 }
 
-
 } // namespace Parsing
+
 #endif // PARSERTOY_DEDUP
 
 #endif // _PARSERTOY_HPP_
