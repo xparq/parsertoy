@@ -160,6 +160,18 @@ CASE("regex curated ID") {
 	CHECK(p.parse("a1_"));
 }
 
+CASE("_OR") {
+	Parser p(_{_OR, "_ID", "=", "_DIGITS", ";" });
+	p.syntax.DUMP();
+
+	CHECK(p.parse("some_id"));
+	CHECK(p.parse("="));
+	CHECK(p.parse("1"));
+	CHECK(p.parse("190"));
+	CHECK(p.parse(";"));
+	CHECK(!p.parse("!"));
+}
+
 CASE("set int - ANY") {
 	RULE r = _{
 		_{_ANY, "_WHITESPACE"},

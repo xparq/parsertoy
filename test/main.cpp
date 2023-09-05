@@ -69,7 +69,7 @@ CASE("PROD: directly from ATOM-RULE") {
 	atom_rule.DUMP();
 }
 
-CASE("PROD: directly from ATOM-RULE, plus prod from it") {
+CASE("PROD: directly from ATOM-RULE, plus PROD from it") {
 	____
 	string atom = "atom 1";
 	RULE atom_rule{atom};

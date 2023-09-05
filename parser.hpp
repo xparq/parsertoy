@@ -243,8 +243,9 @@
 //!!??#include <variant> // for uniformly AST nodes
 #include <vector>
 #include <unordered_map>
-#include <initializer_list>
-	using std::initializer_list;
+#include <map>
+//#include <initializer_list>
+//	using std::initializer_list;
 
 //---------------------------------------------------------------------------
 namespace Parsing {
@@ -253,7 +254,8 @@ namespace Parsing {
 
 	using ATOM  = string; // direct literal or "terminal regex"
 	using REGEX = std::regex; //!! When changing it (e.g. to PCRE2), a light adapter class would be nice!
-	using PATTERN_MAP = std::unordered_map<string, string>;
+	using STRING_MAP = std::unordered_map<string, string>;
+	using PATTERN_MAP = STRING_MAP;
 	//using PATTERN_MAP = std::unordered_map<string, REGEX>;
 	extern PATTERN_MAP NAMED_PATTERNS;
 		//!! Alas, no constexpr init for dynamic containers... :-/
@@ -285,6 +287,11 @@ namespace Parsing {
 	                                   // - Note: "greedy" above means that [A...]A will never match! Be careful!
 	CONST _OPT         = OPCODE('?');  // 0 or 1; expects 1 argument
 	CONST _NOT         = OPCODE('!');  // Expects 1 argument (Beware of using it with patterns!... ;) )
+
+	// Meta-operators
+	CONST _SAVE        = OPCODE('(');  // Save matched text to unnamed capture results
+	CONST _SAVE_AS     = OPCODE('[');  // Save matched text to named capture results
+	                                   // - Its 1st arg must be an ATOM (USER_LITERAL) for the name
 
 	// Operator functions...
 	struct RULE;
@@ -625,6 +632,11 @@ public:
 #endif	
 	string text;
 	size_t text_length;
+
+	// Results of capture ops.; valid only after a successful parse():
+	STRING_MAP  named_captures; //!! My initial guess is that SSO makes it pretty much useless to keep string_views here.
+	std::map<size_t, string> unnamed_captures; // Ordered map! Now we only have to make sure that its order kinda makes sense! :)
+
 	// Diagnostics:
 	int loopguard;
 	int depth_reached;
@@ -633,20 +645,34 @@ public:
 
 	CONST DEFAULT_RECURSION_LIMIT = 500;
 
-	void _reset()
+	void _reset_counters()
 	{
-		// Sync with the ctor!
 		loopguard = DEFAULT_RECURSION_LIMIT;
 		depth_reached = DEFAULT_RECURSION_LIMIT;
 		rules_tried = 0;
 		terminals_tried = 0;
 	}
-	
-	void _reset_text(const string& txt)
+
+	void _reset_results()
 	{
+		_reset_counters();
+		named_captures = {};
+		unnamed_captures = {};
+	}
+
+	// Must be called before (i.e. by) each parse()!
+	void _reset()
+	{
+		_reset_results();
+	}
+
+	void _set_text(const string& txt)
+	{
+		_reset(); // First this, to ensure `captures` or any other saved results (like
+		          // error messages etc.) can never refer to removed text, esp. if
+		          // they store string_views or positions etc. instead of copies!
 		text = txt;
 		text_length = txt.length();
-		_reset();
 	}
 
 
@@ -670,15 +696,21 @@ public:
 	// Convenience front-ends to match(...)
 	bool parse(const string& txt)
 	{
-		_reset_text(txt);
+		_set_text(txt);
 		size_t matched_length_ignored;
 		return match(0, syntax, matched_length_ignored);
 	}
 	bool parse(const string& txt, OUT size_t& matched_length)
 	{
-		_reset_text(txt);
+		_set_text(txt);
 		return match(0, syntax, matched_length);
 	}
+
+	//!! Move these to a `results` (or directly to `captures` or `saves`) objects
+	//!! instead, for more (versatile) queries like unnamed_captures() or saves.count()
+	//!! etc. to begin with!
+	const string& operator[](const string& name) const;
+	const string& operator[](size_t index_of_unnamed) const;
 
 	//-------------------------------------------------------------------
 	bool match(size_t pos, const RULE& rule, OUT size_t& len)
@@ -1126,12 +1158,66 @@ DBG("REGEX \"{}\": ---NOT--- MATCHED '{}'!", atom, p.text.substr(pos));
 		}
 	};
 
+//---------------------------------------------------------------------------
+	OPERATORS[_SAVE] = [](Parser& p, size_t pos, const RULE& rule, OUT size_t& len) -> bool
+	{
+		assert(rule.prod().size() >= 2);
+
+		// Shift off the _SAVE prefix...
+		//!! ...which, alas, currently means full cloning... :-/
+		RULE target_rule(PROD(rule.prod().cbegin() + 1, rule.prod().cend()));
+
+		if (p.match(pos, target_rule, len)) {
+			auto snapshot = string_view(p.text).substr(pos, len);
+DBG("\n\n    SNAPSHOT: [{}]\n\n", snapshot);
+			p.unnamed_captures[(size_t)(void*)&rule] = snapshot;
+			return true;
+		}
+		return false;
+	};
+
+	OPERATORS[_SAVE_AS] = [](Parser& p, size_t pos, const RULE& rule, OUT size_t& len) -> bool
+	{
+		assert(rule.prod().size() >= 3);
+		assert(rule.prod()[1].is_atom());
+
+		const string& name = rule.prod()[1].atom;
+
+		// Shift off the _SAVE prefix + the name...
+		//!! ...which, alas, currently means full cloning... :-/
+		RULE target_rule(PROD(rule.prod().cbegin() + 2, rule.prod().cend()));
+
+		if (p.match(pos, target_rule, len)) {
+			auto snapshot = string_view(p.text).substr(pos, len);
+DBG("\n\n    SNAPSHOT[{}]: \"{}\"\n\n", name, snapshot);
+			p.named_captures[name] = snapshot;
+			return true;
+		}
+		return false;
+	};
+
 
 	assert(!NAMED_PATTERNS.empty());
 	assert(!OPERATORS.empty());
 	initialized = true;
 DBG("+++ Static init done. +++");
 } // init()
+
+const string& Parser::operator[](const string& name) const
+{
+	static string EMPTY = "";
+	try { return named_captures.at(name); }
+	catch(...) { return EMPTY; }
+}
+
+const string& Parser::operator[](size_t index_of_unnamed) const
+{
+	static string EMPTY = "";
+	try { return unnamed_captures.at(index_of_unnamed); }
+	catch(...) { return EMPTY; }
+}
+
+
 } // namespace Parsing
 #endif // PARSERTOY_DEDUP
 
