@@ -9,14 +9,39 @@
 // Global env. for the test cases...
 using namespace Parsing;
 
-CASE("RULE: empty from empty str") {
+CASE("diagnostic memo") {
+	RULE r = _{"_IDCHAR", "_BACKSLASH"}; // named patterns
+	r.DUMP();
+}
+
+/* This won't compile:
+CASE("RULE: {}") {
+	//RULE r{}; // "no default ctor" -- FFS, C++, this is an empty aggreg.!
+	r.DUMP();
+}
+*/
+CASE("RULE: {NIL}") {
+	RULE r{_NIL};
+	r.DUMP();
+	CHECK((r.is_opcode() && !r.is_prod()));
+	CHECK(r.type == RULE::OP);
+	CHECK(r.opcode == _NIL);
+}
+CASE("RULE: ctor-op= NIL - internal-only use case, but should work") {
+	RULE r = _NIL;
+	CHECK((r.is_opcode() && !r.is_prod()));
+	CHECK(r.type == RULE::OP);
+	CHECK(r.opcode == _NIL);
+	____
+}
+CASE("RULE: ctor-op= empty str") {
 	RULE r = ""; //!! This happens to work without a prior init(), but not future-proof!
 	                //!! Also, it won't itself call init! 
 	r.DUMP();
 	CHECK(!r.prod().empty()); // Should've been converted to PROD{NIL}, so not empty
 	____
 }
-CASE("RULE: empty from empty PROD 1") {
+CASE("RULE: ctor-op= empty PROD") {
 	//RULE rule = {}; //! This won't compile, _{} needed!
 	RULE r = _{}; //!! This happens to work without a prior init(), but not future-proof!
 	                 //!! Also, it won't itself call init! 
@@ -24,23 +49,14 @@ CASE("RULE: empty from empty PROD 1") {
 	CHECK(!r.prod().empty()); // Should've been converted to PROD{NIL}, so not empty
 	____
 }
-CASE("RULE: empty from empty PROD 2") {
+CASE("RULE: from empty PROD {}") {
 	PROD prod{};
 	RULE r{prod};
 	r.DUMP();
 	CHECK(!r.prod().empty()); // Should've been converted to PROD{NIL}, so not empty
 	____
 }
-
-
-CASE("RULE: op = NIL - internal-only use case, but works") {
-	RULE r{_NIL};
-	CHECK((r.is_opcode() && !r.is_prod()));
-	CHECK(r.type == RULE::OP);
-	CHECK(r.opcode == _NIL);
-	____
-}
-CASE("RULE: op = T") {
+CASE("RULE: {T}") {
 	RULE r{_T};
 	CHECK((r.is_opcode() && !r.is_prod()));
 	CHECK(r.type == RULE::OP);
@@ -115,6 +131,8 @@ CASE("PROD: move auto-created RULE from std::string literal") {
 !!*/
 CASE("PROD: move explicit temporary RULE(NIL)") {
 	PROD prod{RULE(_NIL)};
+	//!! This would be even worse, preventing copy elision (MSVC -Wall warned!):
+	//!! PROD prod{std::move(RULE(_NIL))};
 	____
 	CHECK(!"Why not moved?");
 }
@@ -129,7 +147,25 @@ CASE("RULE: move from temp prod.") {
 	RULE r{_{_NIL}};
 	r.DUMP();
 	____
-	CHECK(!"Why not moved?");
+	MESSAGE("Was it still moved? (1 copy is ok for the vector)");
+}
+
+CASE("RULE: move from temp RULE") {
+	____
+	RULE rfrom{_NIL};
+	RULE rto{std::move(rfrom)};
+	rto.DUMP();
+	____
+	MESSAGE("Was it still moved? (1 copy is ok for the vector)");
+}
+
+
+//---------------------------------------------------------------------------
+CASE("relink parents after external vector copy") {
+	RULE r = {_{_OPT, _{_T}}};
+	r.DUMP();
+	RULE q{r};
+	q.DUMP();
 }
 
 
@@ -286,6 +322,20 @@ CASE("regex curated single chars") {
 		"_BACKSLASH"  ,
 	});
 	CHECK(p.parse("\t \"'/\\"));
+}
+
+CASE("infinite recursion detected") {
+	try {
+		Parser p(_{
+			_{_DEF, "self", _{_USE, "self"}},
+			_{_USE, "self"}
+		}); p.syntax.DUMP();
+		p.parse("!");
+		CHECK(false);
+	} catch (std::runtime_error& x) {
+		cerr << x.what() <<  endl;
+		CHECK("OK, got an error, but verify in the logs it's really the loop-guard!");
+	}
 }
 
 

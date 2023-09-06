@@ -1,18 +1,29 @@
 ﻿#ifndef _PARSERTOY_HPP_
 #define _PARSERTOY_HPP_
 /*****************************************************************************
-  General-purpose, extensible recursive descent parser for small tasks
+  Programmable, extensible recursive descent parser for small tasks
+
+    In a sense, this is just a naive, inefficient reimplementation of some
+    common regex functionality -- using regexes... And, for better or worse,
+    it's also like a sort of embryonic LISP. (I only noticed that after
+    it has kinda become one all by itself.)
+
+    (I'm not even sure it still qualifies as a rec. desc. parser.
+    I don't know much about parsing at all, actually.)
+
+    The main feature would be actually building an AST, and supporting user
+    hooks for matching constructs etc., I just haven't got 'round to it yet.
+    At least this is a "structured regex engine" (or "programmable regexes"
+    is also echoing in my mind); i.e. _regular_ regular expressions really
+    dislike structured text, while this can handle nested (recursive)
+    constructs kinda effortlessly.
+
+    And the regex syntax sucks, too, for anything non-trivial. It's like
+    eating thistle, while hugging a hedgehog. Consider this to be a blanket
+    around regexes, and also an exoskeleton, to not only proxy, but extend
+    their abilities.
 
   NOTE:
-
-  - In a sense, this is just a naive/uninformed reimplementation of some basic
-    regex functionality -- using regexes...
-
-    But, the main feature would be actually building an AST, and supporting
-    user hooks etc. for matching constructs, just haven't got 'round to it yet.
-    At least this is a "structured regex engine" (or "programmable regexes"
-    is also echoing in my mind); i.e. *regular* regular expressions are not
-    for structured text, while this can effortlessly handle nested constructs.
 
   - It copies the source text, so that it can be kept a little more clean
     & robust (e.g. for threading), instead of trying to be copyless (and
@@ -160,14 +171,11 @@
 	using namespace std::regex_constants; //!! refine (filter)
 #include <functional> // function, reference_wrapper, ...
 #include <utility> // move
-#include <optional>
-	using std::optional;
-//!!??#include <variant> // for uniformly AST nodes
+//!!#include <variant> //!!Replace that horrid manual union in RULE! (#22)
 #include <vector>
 #include <unordered_map>
 #include <map>
-//#include <initializer_list>
-//	using std::initializer_list;
+
 
 //---------------------------------------------------------------------------
 namespace Parsing {
@@ -216,17 +224,25 @@ namespace Parsing {
 	CONST _SAVE        = OPCODE('(');  // Save matched text to unnamed capture results
 	CONST _SAVE_AS     = OPCODE('[');  // Save matched text to named capture results
 	                                   // - Its 1st arg must be an ATOM (USER_LITERAL) for the name
+	CONST _DEF         = OPCODE(':');  // Define a named rule (expects 2 arguments: "Name", {Rule}
+	                                   // - To trigger Rule later, use _USE...
+	CONST _USE         = OPCODE('`');  // Invoke named rule (expects 1 argument: "Name")
+//!!??	CONST _SELF        = OPCODE('@');  // Invoke the enclosing DEF-target rule, or NIL if none
+
 
 	// Operator functions...
 	struct RULE;
 	class Parser;
-	using OPERATION = std::function<bool(Parser&, size_t src_pos, const RULE&, OUT size_t& matched_len)>;
 
+	using CONST_OPERATOR = std::function<bool(Parser&, size_t src_pos, const RULE&, OUT size_t& matched_len)>;
+//!!	using OPERATOR       = std::function<bool(Parser&, size_t src_pos,       RULE&, OUT size_t& matched_len)>;
 	// Operator lookup table...
-	using OP_MAP = std::unordered_map<OPCODE, OPERATION>;
-	extern OP_MAP OPERATORS; //!! See also NAMED_PATTERNS, why not CONST (or at least static)
-		// Will be populated later, as:
-		// OPERATORS[RULE::opcode] = [](Parser&, input_pos, rule&) { ... return match-length or 0; }
+	using CONSTOP_MAP = std::unordered_map<OPCODE, CONST_OPERATOR>;
+//!!	using OP_MAP      = std::unordered_map<OPCODE, OPERATOR>;
+	extern CONSTOP_MAP CONST_OPERATORS;
+//!!	extern OP_MAP      OPERATORS;
+		// These will be populated later, as e.g.:
+		// OPERATORS[SOME_OPCODE] = [](Parser&, input_pos, rule&) { ... return match-length or 0; }
 		// Can be freely extended by users (respecting the opcode list above).
 
 
@@ -278,7 +294,7 @@ struct RULE
 
 		//!!Well, making it const didn't help with the mysterious double copy at "COPYLESS" creation!...
 		//!! -> TC "PROD: directly from ATOM-RULE"
-		const ATOM atom;    //!! Should be extended later to support optional name + regex pairs! (See d_name, currently!)
+		const ATOM atom;    //!! Should be extended later to support optional name + regex pairs! (See d_memo, currently!)
 		                    //!! Or, actually, better to have patterns as non-atomic types instead (finally)?
 		                    //!! Also: extend to support precompiled regexes!
 
@@ -295,8 +311,11 @@ struct RULE
 #endif		
 	};
 
-	string d_name; // Symbolic name, if any (e.g. for named patterns, opcodes) for diagnostics,
-	               // or (a placeholder to) the "uniform string representation" of a rule
+	mutable string name;   // Optional user-assigned symbolic name
+
+	mutable string d_memo; // Diagnostic note (e.g. NAMED_PATTERNS key, opcode)
+	//!!string d_as_str // (placeholder to) "uniform string representation" of a rule
+	                    //!! (could even evolve to sg. useful for #9)
 
 
 	//-----------------------------------------------------------
@@ -333,7 +352,7 @@ struct RULE
 	                                               // Also, this should stop the bizarra "vector too long" range
 	                                               // misinterpretation errors (with arrays of 2 items), too, as a bonus!
 
-	RULE(OPCODE opcode): type(OP), opcode(opcode), d_name({(char)opcode}) {
+	RULE(OPCODE opcode): type(OP), opcode(opcode) {
 DBG("RULE::OPCODE-ctor creating [{}] as: {} ('{}')...", (void*)this, opcode, (char)opcode);
 	}
 
@@ -429,7 +448,10 @@ DBG("~RULE destructing [{}] (type: {})...", (void*)this, _type_cstr());
 		_destruct();
 	}
 
+
 private:
+//!!??friend class Parser; //!!?? WTF does this make no difference?! See _lookup()!
+
 	//-----------------------------------------------------------
 	// Construction/destruction/copy/move helpers...
 
@@ -445,19 +467,29 @@ DBG("- Setting up empty rule...");
 		_prod.emplace_back(_NIL);
 #endif
 		type = PROD;
-		d_name = "EMPTY";
+		d_memo = "<EMPTY>";
 	}
 
 	void _init_atom(auto&& s);
 
 	void _relink_parents() {
 		if (!is_prod()) return;
-		for(auto& r : prod()) {
+		for (auto& r : prod()) {
 			r._parent = this;
 			r._relink_parents();
 		}
 	}
 
+	public:
+	const RULE* _lookup(const string& n) const {
+		if (name == n) return this;
+		if (is_prod()) for(auto& r : prod()) {
+			if (auto res = r._lookup(n); res) return res;
+		}
+		return nullptr;
+	}
+
+private:
 	void _destruct() {
 //DBG("RULE::destruc (type: {})...", _type_cstr()); //DUMP();
 		assert (type != _DESTROYED_);
@@ -476,7 +508,8 @@ DBG("- Setting up empty rule...");
 		assert(other.type != _DESTROYED_);
 		assert(other.type != _MOVED_FROM_);
 		type = other.type;
-		d_name = other.d_name;
+		name = other.name;
+		d_memo = other.d_memo;
 		if      (is_atom()) new (const_cast<ATOM*>(&atom)) ATOM(other.atom);
 #ifdef COPYLESS_GRAMMAR
 		else if (type == PROD) new (&_prod) decltype(_prod)(other._prod); //! Copying ref_wrap will only bind other's!
@@ -499,13 +532,14 @@ DBG("RULE::_copy (type == {}) done.", _type_cstr());
 		assert(tmp.type != _DESTROYED_);
 		assert(tmp.type != _MOVED_FROM_);
 		type = tmp.type;
-		d_name = tmp.d_name;
+		std::swap(name, tmp.name);
+		std::swap(d_memo, tmp.d_memo);
 		if      (is_atom()) new (const_cast<ATOM*>(&atom)) ATOM(std::move(tmp.atom));
 #ifdef COPYLESS_GRAMMAR
 		else if (type == PROD) new (&_prod) decltype(_prod)(std::move(tmp._prod)); //!!?? Will this do what I hope?
 		                                                                           //!! I don't think so!...
 #else
-		else if (type == PROD) new (const_cast<PRODUCTION*>(&_prod)) PRODUCTION(std::move(tmp.prod())); //! Can't use is_prod() here: it's false if empty()!
+		else if (type == PROD) new (const_cast<PRODUCTION*>(&_prod)) PRODUCTION(std::move(tmp._prod)); //! Can't use is_prod() here: it's false if empty()!
 #endif
 		else                opcode = std::move(tmp.opcode); // just a number...
 		tmp.type = _MOVED_FROM_;
@@ -542,18 +576,19 @@ DBG("RULE::_move (type == {}) done.", _type_cstr());
 		auto _p  [[maybe_unused]] = [&](auto x, auto... args) {cerr << x << endl; };
 
 		if (!level) p("/------------------------------------------------------------------\\");
-		if (d_name.empty()) p_(format("[{} :{}] {} (type #{}):",      (void*)this, (void*)_parent, _type_cstr(), (int)type));
-		else                p_(format("[{} :{}] {} (type #{}) '{}':", (void*)this, (void*)_parent, _type_cstr(), (int)type, d_name));
+		if (name.empty()) p_(format("[{} :{}] {} (type #{}):",      (void*)this, (void*)_parent, _type_cstr(), (int)type));
+		else                p_(format("[{} :{}] {} (type #{}) '{}':", (void*)this, (void*)_parent, _type_cstr(), (int)type, name));
 		if (type == _DESTROYED_)  p(" !!! INVALID (DESTROYED) OBJECT !!!");
 		if (type == _MOVED_FROM_) p(" !!! INVALID (MOVED-FROM) OBJECT !!!");
-		if (is_atom()) { _p(format(" \"{}\"", atom));
+		if (is_atom()) { _p_(format(" \"{}\"", atom));
 		} else if (type == PROD) { //! Can't use is_prod() here: it's false if empty()!
 			_p(""); p("{"); // New line for the {
 			for (auto& r : prod()) { r._dump(level + 1); }
-			p("}");
-		} else if (type == OP) { _p(format(" opcode = {} ('{}')", opcode, char(opcode)));
+			p_("}");
+		} else if (type == OP) { _p_(format(" opcode = {} ('{}')", opcode, char(opcode)));
 		} else if (type == _DESTROYED_) { p("!!! _DESTROYED_ !!!");
 		} else p("*** UNKNOWN/INVALID RULE TYPE! ***");
+		_p(d_memo.empty() ? "" : format(" // {} ", d_memo));
 		if (!level) p("\\------------------------------------------------------------------/\n");
 	}
 #ifndef NDEBUG
@@ -583,7 +618,7 @@ public:
 
 	// Results of capture ops.; valid only after a successful parse():
 	STRING_MAP  named_captures; //!! My initial guess is that SSO makes it pretty much useless to keep string_views here.
-	std::map<size_t, string> unnamed_captures; // Ordered map! Now we only have to make sure that its order kinda makes sense! :)
+	std::map<size_t, /*!!const!!*/ string> unnamed_captures; // Ordered map! Now we only have to make sure that its order kinda makes sense! :)
 
 	// Diagnostics:
 	int loopguard;
@@ -591,12 +626,12 @@ public:
 	int rules_tried;
 	int terminals_tried;
 
-	CONST DEFAULT_RECURSION_LIMIT = 500;
+	CONST RECURSION_LIMIT = 300; // Hopefully this'd be hit before a stack overflow... (500 was too high for me)
 
 	void _reset_counters()
 	{
-		loopguard = DEFAULT_RECURSION_LIMIT;
-		depth_reached = DEFAULT_RECURSION_LIMIT;
+		loopguard = RECURSION_LIMIT;
+		depth_reached = RECURSION_LIMIT;
 		rules_tried = 0;
 		terminals_tried = 0;
 	}
@@ -623,9 +658,13 @@ public:
 		text_length = txt.length();
 	}
 
-
+/*!!??WTF cannot access -- it's set as friend! :-o
+	const RULE* _lookup(const string& name) const {
+		return syntax._lookup(name);
+	}
+??!!*/
 	//-------------------------------------------------------------------
-	Parser(const RULE& syntax, int maxnest = DEFAULT_RECURSION_LIMIT):
+	Parser(const RULE& syntax, int maxnest = RECURSION_LIMIT):
 		// Sync with _reset*()!
 		syntax(syntax),
 		loopguard(maxnest),
@@ -654,6 +693,9 @@ public:
 		return match(0, syntax, matched_length);
 	}
 
+	//!!bool run(/*runtime_context { const string& input, OUT string output}*/)
+	bool run() { return parse(""); }
+
 	//!! Move these to a `results` (or directly to `captures` or `saves`) objects
 	//!! instead, for more (versatile) queries like unnamed_captures() or saves.count()
 	//!! etc. to begin with!
@@ -667,38 +709,55 @@ public:
 	// If matches, returns the length of the matched input, otherwise 0.
 	//-------------------------------------------------------------------
 	{
-DBG("Parser::match()");
+DBG("match({}, {} [{}]: '{}')... // loopguard: {}", pos,
+			rule._type_cstr(), (void*)&rule,
+			rule.type == RULE::USER_LITERAL ? rule.atom :
+			rule.is_opcode() ? string(1, (char)rule.opcode) : "",
+			loopguard);
+
 		--loopguard;
 		if (depth_reached > loopguard)
 		    depth_reached = loopguard;
 		if (!loopguard) {
-			ERROR("Infinite loop (in 'match()')?!\n");
+			ERROR("Recursion level {} is too deep (in match())!", RECURSION_LIMIT);
 		}
 
-		OPERATION f;
+		CONST_OPERATOR f;
 
 		//++rules_tried; //!! #_of_tried_matches, FFS
 
 		if (rule.is_atom()) // "curated regex", literal (or user regex, if still supported...)
 		{
-			assert(!OPERATORS.empty());
-			f = OPERATORS[_ATOM];
+			assert(!CONST_OPERATORS.empty());
+			assert(CONST_OPERATORS.find(_ATOM) != CONST_OPERATORS.end());
+			f = CONST_OPERATORS[_ATOM];
 			//!! Should be dispatched further across the various atom types, instead:
 			//!!f = atom_handler(rule);
 		}
 		else if (rule.is_prod())
 		{
 			f = prod_handler(rule); // First item is the op. of the rule, or else _SEQ is implied:
+				// Throws via ERROR() if not found!
 		}
-		else if (rule.is_opcode())
+		else if (rule.is_opcode()) //!! But _SELF and other nullaries!... :-/ -> #26
 		{
-			ERROR("Invalid grammar at rule '{}': OPCODE outside of PRODUCTION", rule.d_name);
+			ERROR("Invalid grammar at rule {}: OPCODE '{}' outside of PRODUCTION", (void*)&rule, rule.opcode);
 		}
 		else
 		{
-			ERROR("Invalid grammar at rule '{}'", rule.d_name);
+			ERROR("Invalid grammar at rule {}: '{}'", (void*)&rule, rule.d_memo);
 		}
 
+#ifdef NDEBUG
+		len = 0; //! This doesn't help (it's even bad, for false sense of sec., and
+		         //! easily masking bugs with that benign-looking 0 in the output),
+		         //! as 0 is a valid output, which should still be ignored -- as any
+		         //! others! -- if match() returned false!
+			 //! OK, disabling it in debug builds for better diagnostics, but
+			 //! enabling in release mode for some cushioning!...
+#else
+		len = (unsigned)-666; // And indeed, this *did* crash! :) (e.g. #29)
+#endif
 		auto res = f(*this, pos, rule, len); //! Remember: `len` is OUT!
 
 		++loopguard;
@@ -707,11 +766,11 @@ DBG("Parser::match()");
 	}
 
 private:
-	const OPERATION& prod_handler(const RULE& rule) const
+	const CONST_OPERATOR& prod_handler(const RULE& rule) const
 	{
-DBG("OPERATORS in prod_handler: {}", (void*)&OPERATORS); // Remnant from hunting as accidental shadow copies of it...
-//DBG("OPERATORS.size in prod_handler: {}", OPERATORS.size());
-		assert(!OPERATORS.empty());
+//DBG("CONST_OPERATORS in prod_handler: {}", (void*)&CONST_OPERATORS); // Remnant from hunting as accidental shadow copies of it...
+//DBG("CONST_OPERATORS.size in prod_handler: {}", CONST_OPERATORS.size());
+		assert(!CONST_OPERATORS.empty());
 		assert(rule.type == RULE::PROD); //! Shouldn't be asking any other types (not even an opcode-type RULE object directly)
 		assert(!rule.prod().empty());
 
@@ -725,8 +784,8 @@ DBG("OPERATORS in prod_handler: {}", (void*)&OPERATORS); // Remnant from hunting
 			opcode = rule.prod()[0].opcode;
 		}
 			
-		if (auto it = OPERATORS.find(opcode); it != OPERATORS.end()) {
-			decltype(OPERATORS.cbegin()) cit = it; //!!?? better one-liner for iter -> const-iter?
+		if (auto it = CONST_OPERATORS.find(opcode); it != CONST_OPERATORS.end()) {
+			decltype(CONST_OPERATORS.cbegin()) cit = it; //!!?? better one-liner for iter -> const-iter?
 			return cit->second;
 		} else {
 			ERROR("Unimplemented opcode: {} ('{}')", opcode, (char)opcode);
@@ -766,8 +825,6 @@ DBG("RULE::_init_atom from: \"{}\"...", s);
 
 	if (s.empty()) { _init_as_nil(); return; }
 
-	d_name = s; // Save it as name for diagnostics (even though it's the same as it's value for literals)
-
 	auto set_type_and_adjust_regex = [&](string_view pattern, decltype(type) TYPE_if_literal,
 	                                                          decltype(type) TYPE_if_regex) {
 		// If "/.../" then it's a regex, so unwrap & mark it as such:
@@ -784,8 +841,8 @@ DBG("RULE::_init_atom from: \"{}\"...", s);
 	{
 		auto pattern = set_type_and_adjust_regex(it->second, CURATED_LITERAL, CURATED_REGEX);
 		new (const_cast<ATOM*>(&atom)) ATOM(pattern); // Replace the atom name with the actual pattern (that's what that lame `second` is)
-
-DBG("RULE initialized as named pattern '{}' ('{}') (type: {})", d_name, atom, _type_cstr());
+		d_memo = s; // Save the pattern name for diagnostics
+DBG("RULE initialized as named pattern '{}' ('{}') (type: {})", d_memo, atom, _type_cstr());
 	} else {
 		auto pattern = set_type_and_adjust_regex(s, USER_LITERAL, USER_REGEX);
 		new (const_cast<ATOM*>(&atom)) ATOM(pattern);
@@ -805,11 +862,11 @@ DBG("RULE initialized as string literal '{}' (type: {}).", atom, _type_cstr());
 
 
 /*!!
-OPERATION RULE::op(OPCODE code) const
+CONST_OPERATOR RULE::op(OPCODE code) const
 {
 	assert(type == PROD); //! Never asking the opcode directly! :)
-	auto   it  = OPERATORS.find(code);
-	return it != OPERATORS.end() ? *it : false; //!!?? OPERATORS[NIL] // -- but that can't be (!op)'ed... :-/
+	auto   it  = CONST_OPERATORS.find(code);
+	return it != CONST_OPERATORS.end() ? *it : false; //!!?? CONST_OPERATORS[NIL] // -- but that can't be (!op)'ed... :-/
 }
 !!*/
 
@@ -832,7 +889,8 @@ OPERATION RULE::op(OPCODE code) const
 namespace Parsing {
 
 	PATTERN_MAP NAMED_PATTERNS = {};
-	OP_MAP OPERATORS = {};
+	CONSTOP_MAP CONST_OPERATORS = {};
+//!!	     OP_MAP OPERATORS = {};
 
 void init()
 {
@@ -879,23 +937,23 @@ void init()
 	// Initialize the operation map
 	//-------------------------------------------------------------------
 
-	assert(OPERATORS.empty());
+	assert(CONST_OPERATORS.empty());
 	//-------------------------------------------------------------------
-	OPERATORS[_NIL] = [](Parser&, size_t, const RULE&, OUT size_t&) -> bool
+	CONST_OPERATORS[_NIL] = [](Parser&, size_t, const RULE&, OUT size_t&) -> bool
 	{
 DBG("NIL: no op. (returning false)");
 		return false;
 	};
 
 	//-------------------------------------------------------------------
-	OPERATORS[_T] = [](Parser&, size_t, const RULE&, OUT size_t&) -> bool
+	CONST_OPERATORS[_T] = [](Parser&, size_t, const RULE&, OUT size_t&) -> bool
 	{
 DBG("T: 'true' op. (returning true)");
 		return true;
 	};
 
 	//-------------------------------------------------------------------
-	OPERATORS[_ATOM] = [](Parser& p, size_t pos, const RULE& rule, OUT size_t& len) -> bool
+	CONST_OPERATORS[_ATOM] = [](Parser& p, size_t pos, const RULE& rule, OUT size_t& len) -> bool
 	{
 		assert(rule.is_atom());
 		static_assert(std::is_same<ATOM, string>::value);
@@ -979,15 +1037,17 @@ DBG("REGEX \"{}\": ---NOT--- MATCHED '{}'!", atom, p.text.substr(pos));
 			//! Case-insensitivity=true will fail for UNICODE chars!
 			//! So we just go case-sensitive. All the $ATOMs are like that anyway, and
 			//! the user still has control to change it, but won't over a failing match...
-			if (p.text_length - pos >= len //! needed to silence a PHP warning...
+//DBG("LITERAL: source: [{}], pos: {}, len: {}", string_view(p.text), pos, len);
+			if (p.text_length - pos >= len
 				&& string_view(p.text).substr(pos, len) == atom)  {
+DBG("LITERAL \"{}\": MATCHED '{}'!", atom, string_view(p.text).substr(pos, len));
 				return true;
 			} else	return false;
 		}
 	};
 
 	//-------------------------------------------------------------------
-	OPERATORS[_SEQ] = [](Parser& p, size_t pos, const RULE& rule, OUT size_t& len) -> bool
+	CONST_OPERATORS[_SEQ] = [](Parser& p, size_t pos, const RULE& rule, OUT size_t& len) -> bool
 	{
 		assert(rule.is_prod());
 		assert(rule.prod().size() >= 2);
@@ -1004,14 +1064,17 @@ DBG("REGEX \"{}\": ---NOT--- MATCHED '{}'!", atom, p.text.substr(pos));
 	};
 
 	//-------------------------------------------------------------------
-	OPERATORS[_SEQ_IMPLIED] = [](Parser& p, size_t pos, const RULE& rule, OUT size_t& len) -> bool
+	CONST_OPERATORS[_SEQ_IMPLIED] = [](Parser& p, size_t pos, const RULE& rule, OUT size_t& len) -> bool
 	{
+DBG("_SEQ_IMPLIED: Processing rule [{}]", (void*)&rule);
 		assert(rule.is_prod());
+//!! -> #25	assert(rule.prod().size() > 1);
 		assert(rule.prod().size() >= 1);
 
 		len = 0;
 		for (auto r = rule.prod().cbegin(); !(r == rule.prod().cend()); ++r)
 		{
+//DBG("_SEQ_IMPLIED [{}]: next rule: [{}], pos: {}", (void*)&rule, (void*)&(*r), pos);
 			size_t len_add;
 			if (!p.match(pos + len, *r, len_add)) return false;
 			else len += len_add;
@@ -1020,23 +1083,25 @@ DBG("REGEX \"{}\": ---NOT--- MATCHED '{}'!", atom, p.text.substr(pos));
 	};
 
 	//-------------------------------------------------------------------
-	OPERATORS[_OR]  = [](Parser& p, size_t pos, const RULE& rule, OUT size_t& len) -> bool
+	CONST_OPERATORS[_OR]  = [](Parser& p, size_t pos, const RULE& rule, OUT size_t& len) -> bool
 	{
 		assert(rule.prod().size() >= 3);
 
 		for (auto r = rule.prod().cbegin() + 1; r != rule.prod().cend(); ++r)
 		{
-			if (p.match(pos, *r, len)) {
+if (r->is_opcode()) DBG("_OR: found opcode '{}'", (char)r->opcode);
+else                DBG("_OR: checking (non-operator) rule [{}]...", (void*)&(*r));
+
+			if (size_t tmplen; p.match(pos, *r, tmplen)) {
+				len = tmplen;
 				return true;
-			} else {
-				continue;
 			}
 		}
 		return false;
 	};
 
 	//-------------------------------------------------------------------
-	OPERATORS[_OPT] = [](Parser& p, size_t pos, const RULE& rule, OUT size_t& len) -> bool
+	CONST_OPERATORS[_OPT] = [](Parser& p, size_t pos, const RULE& rule, OUT size_t& len) -> bool
 	{
 		assert(rule.prod().size() == 2);
 
@@ -1047,7 +1112,7 @@ DBG("REGEX \"{}\": ---NOT--- MATCHED '{}'!", atom, p.text.substr(pos));
 	};
 
 	//-------------------------------------------------------------------
-	OPERATORS[_ANY] = [](Parser& p, size_t pos, const RULE& rule, OUT size_t& len) -> bool
+	CONST_OPERATORS[_ANY] = [](Parser& p, size_t pos, const RULE& rule, OUT size_t& len) -> bool
 	{
 		assert(rule.prod().size() == 2);
 
@@ -1070,7 +1135,7 @@ DBG("REGEX \"{}\": ---NOT--- MATCHED '{}'!", atom, p.text.substr(pos));
 	};
 
 	//-------------------------------------------------------------------
-	OPERATORS[_MANY] = [](Parser& p, size_t pos, const RULE& rule, OUT size_t& len) -> bool
+	CONST_OPERATORS[_MANY] = [](Parser& p, size_t pos, const RULE& rule, OUT size_t& len) -> bool
 	{
 		assert(rule.prod().size() == 2);
 
@@ -1095,19 +1160,20 @@ DBG("REGEX \"{}\": ---NOT--- MATCHED '{}'!", atom, p.text.substr(pos));
 	};
 
 	//-------------------------------------------------------------------
-	OPERATORS[_NOT] = [](Parser& p, size_t pos, const RULE& rule, OUT size_t& len) -> bool
+	CONST_OPERATORS[_NOT] = [](Parser& p, size_t pos, const RULE& rule, OUT size_t& len) -> bool
 	{
 		assert(rule.prod().size() == 2);
 
-		if (p.match(pos, rule.prod()[1], len)) {
+		if (size_t tmplen; p.match(pos, rule.prod()[1], tmplen)) {
 			return false;
 		} else {
+			len = tmplen;
 			return true;
 		}
 	};
 
 	//---------------------------------------------------------------------------
-	OPERATORS[_SAVE] = [](Parser& p, size_t pos, const RULE& rule, OUT size_t& len) -> bool
+	CONST_OPERATORS[_SAVE] = [](Parser& p, size_t pos, const RULE& rule, OUT size_t& len) -> bool
 	{
 		assert(rule.prod().size() >= 2);
 
@@ -1124,7 +1190,7 @@ DBG("\n\n    SNAPSHOT: [{}]\n\n", snapshot);
 		return false;
 	};
 
-	OPERATORS[_SAVE_AS] = [](Parser& p, size_t pos, const RULE& rule, OUT size_t& len) -> bool
+	CONST_OPERATORS[_SAVE_AS] = [](Parser& p, size_t pos, const RULE& rule, OUT size_t& len) -> bool
 	{
 		assert(rule.prod().size() >= 3);
 		assert(rule.prod()[1].is_atom());
@@ -1144,9 +1210,49 @@ DBG("\n\n    SNAPSHOT[{}]: \"{}\"\n\n", name, snapshot);
 		return false;
 	};
 
+	CONST_OPERATORS[_DEF] = [](Parser& p, [[maybe_unused]] size_t pos, const RULE& rule, OUT [[maybe_unused]] size_t& len) -> bool {
+		assert(rule.prod().size() == 3);
+		assert(rule.prod()[1].is_atom());
+		auto name = rule.prod()[1].atom;
+		auto target_rule = rule.prod().begin() + 2;
+		target_rule->name = name;
+DBG("_DEF: '{}' -> [{}], lookup: {}", name, (void*)&(*target_rule), (void*)p.syntax._lookup(name));
+		len = 0;
+		return true;
+	};
+
+	CONST_OPERATORS[_USE] = [](Parser& p, size_t pos, const RULE& rule, OUT size_t& len) -> bool {
+		assert(rule.prod().size() == 2);
+		assert(rule.prod()[1].is_atom());
+		auto name = rule.prod()[1].atom;
+
+		auto target_rule = p.syntax._lookup(name);
+
+		if (!target_rule) {
+			ERROR("_USE: '{}' was not found!", name);
+			return false;
+		}
+DBG("_USE: trying rule [{}] at pos {}...", (void*)target_rule, pos);
+		return p.match(pos, *target_rule, len);
+	};
+
+/*!!
+	CONST_OPERATORS[_SELF] = [](Parser& p, size_t pos, const RULE& rule, OUT size_t& len) -> bool {
+		assert(rule.prod().size() == 1);
+
+		auto target_rule = ...
+
+DBG("_SELF: recursing...");
+		if (target_rule) {
+			return p.match(pos, *target_rule, len);
+		} else {
+			return false;
+		}
+	};
+!!*/
 
 	assert(!NAMED_PATTERNS.empty());
-	assert(!OPERATORS.empty());
+	assert(!CONST_OPERATORS.empty());
 	initialized = true;
 DBG("+++ Static init done. +++");
 } // init()

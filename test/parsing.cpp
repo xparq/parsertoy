@@ -147,7 +147,6 @@ CASE("regex curated single chars") {
 	});
 	CHECK(p.parse("\t \"'/\\"));
 }
-
 CASE("regex curated ID") {
 	Parser p(_{"_ID"});
 	CHECK(!p.parse(""));
@@ -160,7 +159,8 @@ CASE("regex curated ID") {
 	CHECK(p.parse("a1_"));
 }
 
-CASE("_OR") {
+
+CASE("_OR: more than 2") {
 	Parser p(_{_OR, "_ID", "=", "_DIGITS", ";" });
 	p.syntax.DUMP();
 
@@ -171,6 +171,64 @@ CASE("_OR") {
 	CHECK(p.parse(";"));
 	CHECK(!p.parse("!"));
 }
+CASE("_OR: mixed with PROD arg") {
+	Parser p(_{
+		_{_OR, "_DIGITS", _{"a", "b"}},
+		";" // ; just for anchoring
+	});
+	p.syntax.DUMP();
+
+	CHECK(p.parse("1;"));
+	CHECK(p.parse("ab;"));
+	CHECK(!p.parse(";"));
+	CHECK(!p.parse("1 ab;"));
+	CHECK(!p.parse("1 a b;"));
+}
+CASE("_OR: wtf original") {
+	RULE x = _{"x"};
+	Parser good{_{_OR, x, '$', "++++++++SENTINEL++++++++"}};
+	//good.syntax.DUMP();
+	CHECK(good.parse("x -> This is correct actually, nothing to see here."));
+
+	Parser bad{_{_{_OR, x, '$', "++++++++SENTINEL++++++++"}, "DUMMY ANCHOR"}};
+	//bad.syntax.DUMP();
+	CHECK(!bad.parse("x -> But not with an anchor."));
+}
+CASE("_OR: wtf opcode error") {
+	try {
+	RULE code = _{_MANY, _{_OR, "_ID", "=", "_DIGITS", ";", "_WHITESPACES"} };
+	// '$' is a nonexistent opcode, jus to trigger an error:
+	RULE bad  = _{_{_{_OR, code, '$', "++++++++SENTINEL++++++++"}}};
+	// "$" is just an ordinary literal, no problems:
+	RULE good = _{_{_{_OR, code, "$", "++++++++SENTINEL++++++++"}}};
+//	Parser p(good); p.syntax.DUMP();
+	Parser p(bad); p.syntax.DUMP();
+	p.parse("...check the logs, look for the SENTINEL in the OR loop!");
+	} catch (std::runtime_error&) {
+		CHECK("OK, got the exception.");
+	}
+}
+CASE("_NOT") {
+	Parser p(_{_NOT, "a"});
+	p.syntax.DUMP();
+	CHECK(!p.parse("a"));
+	CHECK(p.parse("b"));
+	CHECK(p.parse(" "));
+	CHECK(p.parse(""));
+}
+CASE("_NOT: PROD arg") {
+	Parser p(_{_NOT, _{"a", "b"}});
+	p.syntax.DUMP();
+	CHECK(!p.parse("ab"));
+	CHECK(!p.parse("abc"));
+	CHECK(p.parse("a"));
+	CHECK(p.parse("b"));
+	CHECK(p.parse("aab"));
+	CHECK(p.parse("ba"));
+	CHECK(p.parse(" "));
+	CHECK(p.parse(""));
+}
+
 
 CASE("set int - ANY") {
 	RULE r = _{
