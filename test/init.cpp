@@ -20,8 +20,8 @@ using namespace Parsing;
 /* NO LONGER AN ERROR: init() is called implicitly when creating the first ATOM rule!
 CASE("error-no-init") {
 	// init() must be called before doing anything other than creating a Parser!
-	RULE nil = _NIL; // This still works, but is not future-proof!
-	RULE wrong = _{"_WHITESPACE"}; // ERROR without init()!... (No patterns, will be a literal!)
+	Rule nil = _NIL; // This still works, but is not future-proof!
+	Rule wrong = _{"_WHITESPACE"}; // ERROR without init()!... (No patterns, will be a literal!)
 	Parser p(wrong);
 	p.parse(" "); // Checks for the failure!
 	CHECK(!p.parse(" ")); // Checks for the failure!
@@ -30,9 +30,9 @@ CASE("error-no-init") {
 
 /* This won't fail either, as long as Parser() also calls init()!
 CASE("error-no-init-op") {
-	// init() must be called before doing anything other than creating an ATOM RULE or a Parser!
-	RULE nil = _NIL; // This does not call init()!
-	RULE wrong = _{nil, nil}; wrong.DUMP();
+	// init() must be called before doing anything other than creating an ATOM Rule or a Parser!
+	Rule nil = _NIL; // This does not call init()!
+	Rule wrong = _{nil, nil}; wrong.DUMP();
 	Parser p(wrong);
 	// ERROR without init(): The implicit SEQ rule has no handler!
 	CHECK(!p.parse(" ")); // Checks for the failure!
@@ -40,30 +40,30 @@ CASE("error-no-init-op") {
 */
 
 CASE("implicit init by Parser, after no init by OP rules") {
-	// init() must be called before doing anything other than creating an ATOM RULE or a Parser!
-	RULE t = _T; // This does not call init()!
-	RULE r = _{t, t}; r.DUMP(); // Neither does this!
+	// init() must be called before doing anything other than creating an ATOM Rule or a Parser!
+	Rule t = _T; // This does not call init()!
+	Rule r = _{t, t}; r.DUMP(); // Neither does this!
 	Parser p(r); // But this one does.
 	CHECK(p.parse(""));
 }
 
 CASE("explicit init, then Parser(), too (before SEQ_IMPL op call)") {
 	init();
-	RULE t = _T;
-	RULE r = _{t, t};
+	Rule t = _T;
+	Rule r = _{t, t};
 	Parser p(r);
 	CHECK(p.parse(""));
 }
 
-CASE("explicit init, then named-pattern RULE, too") {
-	init(); // Must be called before doing anything other than creating an ATOM RULE or a Parser!
-	RULE r = _{"_WHITESPACE"}; // No longer ERROR without explicit init().
+CASE("explicit init, then named-pattern Rule, too") {
+	init(); // Must be called before doing anything other than creating an ATOM Rule or a Parser!
+	Rule r = _{"_WHITESPACE"}; // No longer ERROR without explicit init().
 	Parser p(r);
 	CHECK(p.parse(" "));
 }
 
-CASE("implicit init by first ATOM RULE") {
-	RULE r = _{"_WHITESPACE"}; // ERROR without init()!... (No patterns, will be a literal!)
+CASE("implicit init by first ATOM Rule") {
+	Rule r = _{"_WHITESPACE"}; // ERROR without init()!... (No patterns, will be a literal!)
 	Parser p(r);
 	CHECK(p.parse(" "));
 }

@@ -58,9 +58,9 @@ CASE("call") {
 
 /*
 CASE(": nested") {
-	RULE code = _{_MANY, _{_OR, "_ID", "=", "_DIGITS", ";", "_WHITESPACES"} };
-	RULE block = _{_DEF, "BLOCK", _{"<", code, ">"}};
-	RULE block_out = _{"<", _{_SAVE_AS, "outer",
+	Rule code = _{_MANY, _{_OR, "_ID", "=", "_DIGITS", ";", "_WHITESPACES"} };
+	Rule block = _{_DEF, "BLOCK", _{"<", code, ">"}};
+	Rule block_out = _{"<", _{_SAVE_AS, "outer",
 				_{ _{_OPT, code}, _{_OPT, block_in}, _{_OPT, code} },
 			}, ">"};
 
@@ -80,7 +80,7 @@ CASE(": nested") {
 
 /*
 CASE("recursive basic") {
-	RULE block = _{_{_OR, "x", _{_SELF}}}, ">"}};
+	Rule block = _{_{_OR, "x", _{_SELF}}}, ">"}};
 	Parser p(block); p.syntax.DUMP();
 
 //	CHECK(p.parse("x = 1"));
@@ -91,8 +91,8 @@ CASE("recursive basic") {
 */
 
 CASE("recursion: nested blocks") {
-	RULE code = _{_MANY, _{_OR, "_ID", "=", "_DIGITS", ";", "_WHITESPACES"} };
-	RULE def_block = _{_DEF, "block", _{"<", _{_ANY, _{_OR, code, _{_USE, "block"}}}, ">"}};
+	Rule code = _{_MANY, _{_OR, "_ID", "=", "_DIGITS", ";", "_WHITESPACES"} };
+	Rule def_block = _{_DEF, "block", _{"<", _{_ANY, _{_OR, code, _{_USE, "block"}}}, ">"}};
 	Parser p(_{def_block, _{_USE, "block"}}); p.syntax.DUMP();
 
 	CHECK(!p.parse("x = 1")); // -> CASE "nested mixed code & blocks"
@@ -101,15 +101,15 @@ CASE("recursion: nested blocks") {
 	CHECK(!p.parse("<x = 1 <z = 2>")); // missing close tag
 }
 CASE("recursion: bad nesting, should fail!") {
-	RULE code = _{_MANY, _{_OR, "_ID", "=", "_DIGITS", ";", "_WHITESPACES"} };
-	RULE def_block = _{_DEF, "block", _{"<", _{_ANY, _{_OR, code, _{_USE, "block"}}}, ">"}};
+	Rule code = _{_MANY, _{_OR, "_ID", "=", "_DIGITS", ";", "_WHITESPACES"} };
+	Rule def_block = _{_DEF, "block", _{"<", _{_ANY, _{_OR, code, _{_USE, "block"}}}, ">"}};
 	Parser p(_{def_block, _{_USE, "block"}}); p.syntax.DUMP();
 
 	CHECK(!p.parse("< <x>")); // missing close tag
 }
 CASE("recursion: nested mixed code & blocks") {
-	RULE code = _{_MANY, _{_OR, "_ID", "=", "_DIGITS", ";", "_WHITESPACES"} };
-	RULE def_block = _{_DEF, "block", _{"<", _{_ANY, _{_OR, code, _{_USE, "block"}}}, ">"}};
+	Rule code = _{_MANY, _{_OR, "_ID", "=", "_DIGITS", ";", "_WHITESPACES"} };
+	Rule def_block = _{_DEF, "block", _{"<", _{_ANY, _{_OR, code, _{_USE, "block"}}}, ">"}};
 	Parser p(_{def_block,
 		_{_OR, code, _{_USE, "block"}}
 	}); p.syntax.DUMP();
@@ -133,21 +133,21 @@ int main(int argc, char** argv)
 		Parsing::init();
 /*!!
 //!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!! CONST VIOLATION!
-		//!!OPERATORS[_NAME] = [](Parser& p, size_t pos, RULE& rule, OUT size_t& len) -> bool {
-		CONST_OPERATORS[_DEF] = [](Parser& p, size_t pos, const RULE& rule, OUT size_t& len) -> bool {
+		//!!OPERATORS[_NAME] = [](Parser& p, size_t pos, Rule& rule, OUT size_t& len) -> bool {
+		CONST_OPERATORS[_DEF] = [](Parser& p, size_t pos, const Rule& rule, OUT size_t& len) -> bool {
 			assert(rule.prod().size() == 3);
 			assert(rule.prod()[1].is_atom());
 			auto name = rule.prod()[1].atom;
 //!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!! CONST VIOLATION HERE! :-/
-			auto target_rule = const_cast<RULE&>(rule).prod().begin() + 2;
+			auto target_rule = const_cast<Rule&>(rule).prod().begin() + 2;
 			target_rule->name = name;
-//			auto& r = const_cast<RULE&>(rule);
+//			auto& r = const_cast<Rule&>(rule);
 //			r.prod().erase(r.prod().begin(), r.prod().begin() + 2);
 DBG("_DEF: '{}', this: {}, parent: {}, lookup: {}", name, (const void*)&rule, (void*)rule._parent, (void*)p.syntax._lookup(name));
 			return true;
 		};
 
-		CONST_OPERATORS[_USE] = [](Parser& p, size_t pos, const RULE& rule, OUT size_t& len) -> bool {
+		CONST_OPERATORS[_USE] = [](Parser& p, size_t pos, const Rule& rule, OUT size_t& len) -> bool {
 			assert(rule.prod().size() == 2);
 			assert(rule.prod()[1].is_atom());
 			auto name = rule.prod()[1].atom;

@@ -11,7 +11,7 @@ using namespace Parsing;
 
 CASE("error-no-init") {
 	// init() must be called before doing anything other than creating a Parser!
-	RULE sp = _{"_WHITESPACE"};
+	Rule sp = _{"_WHITESPACE"};
 	Parser p(sp);
 // These watches only make sense, if also printed from parser.hpp, i.e. from prod_handler():
 DBG("OPERATORS in the test case: {}", (void*)&OPERATORS);
@@ -20,15 +20,15 @@ DBG("OPERATORS.size in the test case: {}", OPERATORS.size());
 	CHECK(p.parse(" "));
 }
 
-CASE("explicit init, then named-pattern RULE, too") {
-	init(); // Must be called before doing anything other than creating an ATOM RULE or a Parser!
-	RULE r = _{"_WHITESPACE"}; // No longer ERROR without explicit init()...
+CASE("explicit init, then named-pattern Rule, too") {
+	init(); // Must be called before doing anything other than creating an ATOM Rule or a Parser!
+	Rule r = _{"_WHITESPACE"}; // No longer ERROR without explicit init()...
 	Parser p(r);
 	CHECK(p.parse(" "));
 }
 
-CASE("implicit init by first ATOM RULE") {
-	RULE r = _{"_WHITESPACE"}; // No longer ERROR without explicit init()...
+CASE("implicit init by first ATOM Rule") {
+	Rule r = _{"_WHITESPACE"}; // No longer ERROR without explicit init()...
 	Parser p(r);
 	CHECK(p.parse(" "));
 }

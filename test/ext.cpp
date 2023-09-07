@@ -114,10 +114,10 @@ int main(int argc, char** argv)
 	try {
 		Parsing::init();
 
-		OPERATORS[_CAPTURE] = [](Parser& p, size_t pos, const RULE& rule, OUT size_t& len) -> bool {
+		OPERATORS[_CAPTURE] = [](Parser& p, size_t pos, const Rule& rule, OUT size_t& len) -> bool {
 			// Shift off the CAPTURE prefix...
 			//!! ...which, alas, currently means full cloning... :-/
-			RULE target_rule(PROD(rule.prod().cbegin() + 1, rule.prod().cend()));
+			Rule target_rule(Prod(rule.prod().cbegin() + 1, rule.prod().cend()));
 
 			if (p.match(pos, target_rule, len)) {
 				cerr << "\n\n    SNAPSHOT: [" << string_view(p.text).substr(pos, len) << "]" << "\n\n";

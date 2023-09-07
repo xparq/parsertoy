@@ -16,7 +16,7 @@ int main([[maybe_unused]] int argc, [[maybe_unused]] char** argv)
 		//!! Parser("! dummy parser for static init !"s); //!!Just to setup the static lookup table(s)!... :)
 			//!! TO TEST OVERALL RULE COPYING, Parser::syntax could be
 			//!! made a value, instead of the current const ref!
-		RULE rule = _NIL;
+		Rule rule = _NIL;
 		____
 		rule.DUMP();
 

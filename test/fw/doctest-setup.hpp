@@ -1,13 +1,5 @@
 ﻿#define DOCTEST_CONFIG_IMPLEMENT // Can be overridden by predefining DOCTEST_CONFIG_IMPLEMENT_WITH_MAIN
 
-
-	//!!
-	//!! My cute little macros conflict with the Windows headers (included by DocTest)!
-	//!!
-	#undef CONST
-	#undef OUT
-	#undef ERROR
-	#undef ATOM // Sigh, "ambiguous symbol", for Windows's typedef WORD...
 #include "doctest-customized.h" //! Dir-of-this-file is non-standard, but supported widely enough
 
 #include <iostream>

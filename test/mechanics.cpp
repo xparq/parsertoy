@@ -10,150 +10,150 @@
 using namespace Parsing;
 
 CASE("diagnostic memo") {
-	RULE r = _{"_IDCHAR", "_BACKSLASH"}; // named patterns
+	Rule r = _{"_IDCHAR", "_BACKSLASH"}; // named patterns
 	r.DUMP();
 }
 
 /* This won't compile:
-CASE("RULE: {}") {
-	//RULE r{}; // "no default ctor" -- FFS, C++, this is an empty aggreg.!
+CASE("Rule: {}") {
+	//Rule r{}; // "no default ctor" -- FFS, C++, this is an empty aggreg.!
 	r.DUMP();
 }
 */
-CASE("RULE: {NIL}") {
-	RULE r{_NIL};
+CASE("Rule: {NIL}") {
+	Rule r{_NIL};
 	r.DUMP();
 	CHECK((r.is_opcode() && !r.is_prod()));
-	CHECK(r.type == RULE::OP);
+	CHECK(r.type == Rule::OP);
 	CHECK(r.opcode == _NIL);
 }
-CASE("RULE: ctor-op= NIL - internal-only use case, but should work") {
-	RULE r = _NIL;
+CASE("Rule: ctor-op= NIL - internal-only use case, but should work") {
+	Rule r = _NIL;
 	CHECK((r.is_opcode() && !r.is_prod()));
-	CHECK(r.type == RULE::OP);
+	CHECK(r.type == Rule::OP);
 	CHECK(r.opcode == _NIL);
 	____
 }
-CASE("RULE: ctor-op= empty str") {
-	RULE r = ""; //!! This happens to work without a prior init(), but not future-proof!
+CASE("Rule: ctor-op= empty str") {
+	Rule r = ""; //!! This happens to work without a prior init(), but not future-proof!
 	                //!! Also, it won't itself call init! 
 	r.DUMP();
-	CHECK(!r.prod().empty()); // Should've been converted to PROD{NIL}, so not empty
+	CHECK(!r.prod().empty()); // Should've been converted to Prod{NIL}, so not empty
 	____
 }
-CASE("RULE: ctor-op= empty PROD") {
-	//RULE rule = {}; //! This won't compile, _{} needed!
-	RULE r = _{}; //!! This happens to work without a prior init(), but not future-proof!
+CASE("Rule: ctor-op= empty Prod") {
+	//Rule rule = {}; //! This won't compile, _{} needed!
+	Rule r = _{}; //!! This happens to work without a prior init(), but not future-proof!
 	                 //!! Also, it won't itself call init! 
 	r.DUMP();
-	CHECK(!r.prod().empty()); // Should've been converted to PROD{NIL}, so not empty
+	CHECK(!r.prod().empty()); // Should've been converted to Prod{NIL}, so not empty
 	____
 }
-CASE("RULE: from empty PROD {}") {
-	PROD prod{};
-	RULE r{prod};
+CASE("Rule: from empty Prod {}") {
+	Prod prod{};
+	Rule r{prod};
 	r.DUMP();
-	CHECK(!r.prod().empty()); // Should've been converted to PROD{NIL}, so not empty
+	CHECK(!r.prod().empty()); // Should've been converted to Prod{NIL}, so not empty
 	____
 }
-CASE("RULE: {T}") {
-	RULE r{_T};
+CASE("Rule: {T}") {
+	Rule r{_T};
 	CHECK((r.is_opcode() && !r.is_prod()));
-	CHECK(r.type == RULE::OP);
+	CHECK(r.type == Rule::OP);
 	CHECK(r.opcode == _T);
 	____
 }
 
-CASE("PROD: empty - TBD...") {
-	PROD prod{};
+CASE("Prod: empty - TBD...") {
+	Prod prod{};
 }
 
-CASE("PROD: NIL (with implicitly created RULE)") {
-	PROD prod{_NIL};
+CASE("Prod: NIL (with implicitly created Rule)") {
+	Prod prod{_NIL};
 	____
 }
-CASE("PROD: T (with implicitly created RULE)") {
-	PROD prod{_T};
+CASE("Prod: T (with implicitly created Rule)") {
+	Prod prod{_T};
 	____
 }
 
 
-CASE("PROD: directly from ATOM-RULE") {
+CASE("Prod: directly from Atom-Rule") {
 	____
 	string atom = "atom 1";
-	RULE atom_rule{atom};
+	Rule atom_rule{atom};
 	atom_rule.DUMP();
 }
 
-CASE("PROD: directly from ATOM-RULE, plus PROD from it") {
+CASE("Prod: directly from Atom-Rule, plus Prod from it") {
 	____
 	string atom = "atom 1";
-	RULE atom_rule{atom};
+	Rule atom_rule{atom};
 
-	PROD prod{atom_rule}; //! Alas, a copy by std::vector, no matter what...
+	Prod prod{atom_rule}; //! Alas, a copy by std::vector, no matter what...
 	                      //!! BUT WHY TWO?!?!?!
 			      //!! There's not even a temporary here! :-o
 			      //!! And even if there was one, I'd expect copy elision
 			      //!! for that, or at least a move! :-o
 	atom_rule.DUMP();
-	CHECK(!"Why two RULE copies?");
+	CHECK(!"Why two Rule copies?");
 }
 
-CASE("PROD: implicit from ATOM (-> RULE)") {
+CASE("Prod: implicit from Atom (-> Rule)") {
 	string atom = "atom 2";
-	PROD prod{atom}; //! Alas, copy by std::vector, no matter what!
+	Prod prod{atom}; //! Alas, copy by std::vector, no matter what!
 	____
 }
 
-CASE("PROD: move auto-created RULE from cstring literal") {
-	PROD prod{"cstr atom"};
+CASE("Prod: move auto-created Rule from cstring literal") {
+	Prod prod{"cstr atom"};
 	____
 	CHECK(!"Why not moved?");
 }
 
-CASE("PROD: move auto-created RULE from std::string literal") {
-	PROD prod{"std::string atom"s};
+CASE("Prod: move auto-created Rule from std::string literal") {
+	Prod prod{"std::string atom"s};
 	____
 	CHECK(!"Why not moved?");
 }
 /*!!NOT MOVED EVEN WITH EXPLICIT move()
-CASE("PROD: move auto-created RULE from cstring literal") {
-	PROD prod{std::move("cstr atom")};
+CASE("Prod: move auto-created Rule from cstring literal") {
+	Prod prod{std::move("cstr atom")};
 	____
 	CHECK(!"Why not moved?");
 }
 
-CASE("PROD: move auto-created RULE from std::string literal") {
-	PROD prod{std::move("std::string atom"s)};
+CASE("Prod: move auto-created Rule from std::string literal") {
+	Prod prod{std::move("std::string atom"s)};
 	____
 	CHECK(!"Why not moved?");
 }
 !!*/
-CASE("PROD: move explicit temporary RULE(NIL)") {
-	PROD prod{RULE(_NIL)};
+CASE("Prod: move explicit temporary Rule(NIL)") {
+	Prod prod{Rule(_NIL)};
 	//!! This would be even worse, preventing copy elision (MSVC -Wall warned!):
-	//!! PROD prod{std::move(RULE(_NIL))};
+	//!! Prod prod{std::move(Rule(_NIL))};
 	____
 	CHECK(!"Why not moved?");
 }
-CASE("PROD: emplace RULE(std::string literal)") {
-	PROD prod; prod.emplace_back("std::string atom"s);
+CASE("Prod: emplace Rule(std::string literal)") {
+	Prod prod; prod.emplace_back("std::string atom"s);
 	____
 //	CHECK(!"Why not moved?");
 }
 
 
-CASE("RULE: move from temp prod.") {
-	RULE r{_{_NIL}};
+CASE("Rule: move from temp prod.") {
+	Rule r{_{_NIL}};
 	r.DUMP();
 	____
 	MESSAGE("Was it still moved? (1 copy is ok for the vector)");
 }
 
-CASE("RULE: move from temp RULE") {
+CASE("Rule: move from temp Rule") {
 	____
-	RULE rfrom{_NIL};
-	RULE rto{std::move(rfrom)};
+	Rule rfrom{_NIL};
+	Rule rto{std::move(rfrom)};
 	rto.DUMP();
 	____
 	MESSAGE("Was it still moved? (1 copy is ok for the vector)");
@@ -162,17 +162,17 @@ CASE("RULE: move from temp RULE") {
 
 //---------------------------------------------------------------------------
 CASE("relink parents after external vector copy") {
-	RULE r = {_{_OPT, _{_T}}};
+	Rule r = {_{_OPT, _{_T}}};
 	r.DUMP();
-	RULE q{r};
+	Rule q{r};
 	q.DUMP();
 }
 
 
 
 /*!!
-CASE("RULE: append - smoke test: CRASHING!...") {
-	RULE r{""};
+CASE("Rule: append - smoke test: CRASHING!...") {
+	Rule r{""};
 //!!!!	r.append(_NOT, "x");
 	____
 }
@@ -180,99 +180,99 @@ CASE("RULE: append - smoke test: CRASHING!...") {
 
 
 /*
-RULE rule = _{}; //!! This happens to work without a prior init(), but not legal/future-proof!
-                 //!! This is NOT equivalend with creating an OP-type RULE directly with r = _NIL!
+Rule rule = _{}; //!! This happens to work without a prior init(), but not legal/future-proof!
+                 //!! This is NOT equivalend with creating an OP-type Rule directly with r = _NIL!
                  //!! This latter is not a supported use case.
 
 //!! Rename r to rule below, to (or) sync with the gloal's actual name!
 
-// Constr. from atom, RULE copy-constr.
+// Constr. from atom, Rule copy-constr.
 CASE() {
-	r = RULE("my atom"); // ATOM is implied!
+	r = Rule("my atom"); // Atom is implied!
 	auto r_copy = r;
 }
 CASE() { using Ss = std::vector<string>; Ss s = {"a"}; }
 
-CASE() { using Rs = std::vector<RULE>; Rs r = {RULE("a")}; }
+CASE() { using Rs = std::vector<Rule>; Rs r = {Rule("a")}; }
 // Not needed:
-CASE() { using Rs = std::vector<RULE>; Rs r = initializer_list<RULE>({RULE("a")}); }
+CASE() { using Rs = std::vector<Rule>; Rs r = initializer_list<Rule>({Rule("a")}); }
 
-CASE() { r = {RULE("a")}; }
+CASE() { r = {Rule("a")}; }
 
-CASE() { r = _{RULE("a"), RULE("b")}; }
+CASE() { r = _{Rule("a"), Rule("b")}; }
 
 //!!FAIL: ...but no wonder; I have no idea, what initializer_list really does ;)
-//RULE r = initializer_list<RULE>({RULE("a"), RULE("b")});
+//Rule r = initializer_list<Rule>({Rule("a"), Rule("b")});
 
-CASE() { r = _{RULE("a"), RULE(" "), RULE("b")}; }
+CASE() { r = _{Rule("a"), Rule(" "), Rule("b")}; }
 
-CASE() { r = _{_MANY, RULE("x")}; }
+CASE() { r = _{_MANY, Rule("x")}; }
 
-CASE() { r = _{_ANY, RULE("x")}; }
+CASE() { r = _{_ANY, Rule("x")}; }
 
 CASE() {
 	r = _{
-		RULE("a"),
-		_{RULE(_NIL)},
+		Rule("a"),
+		_{Rule(_NIL)},
 	};
 }
 
 CASE() {
 	r = _{
-		RULE("a"),
-		_{_ANY, RULE(" ")},
-		RULE("b"),
+		Rule("a"),
+		_{_ANY, Rule(" ")},
+		Rule("b"),
 	};
 }
 
 CASE() {
 	r = _{
-		_{_OR, RULE("one"), RULE("twoe"), RULE("*") },
+		_{_OR, Rule("one"), Rule("twoe"), Rule("*") },
 	};
 }
 
 CASE() {
 	r = _{
-		_{_NOT, RULE(" x ")},
+		_{_NOT, Rule(" x ")},
 	};
 }
 
 CASE() {
 	r = _{
-		_{_OR, RULE("one"), RULE("two"), RULE("*") },
-		_{_NOT, RULE("x")},
+		_{_OR, Rule("one"), Rule("two"), Rule("*") },
+		_{_NOT, Rule("x")},
 	};
 }
 
 //!! Regex not yet...:
-//!!{ RULE r = _{RULE("a"), RULE("_WHITESPACES"), RULE("b")} }
+//!!{ Rule r = _{Rule("a"), Rule("_WHITESPACES"), Rule("b")} }
 
 CASE() {	r = _{"x"}; }
-CASE() {	r = RULE(_{"x"}); }
-CASE() {	r = RULE(_{RULE("x")}); }
+CASE() {	r = Rule(_{"x"}); }
+CASE() {	r = Rule(_{Rule("x")}); }
 
-CASE() {	r = _{RULE("a"), RULE("b")}; }
+CASE() {	r = _{Rule("a"), Rule("b")}; }
 CASE() {	r = _{"a"s, "b"s}; }
-CASE() {	r = _{"a"s}; } // Seems to be the same: RULE r{ ... }
+CASE() {	r = _{"a"s}; } // Seems to be the same: Rule r{ ... }
 
-CASE() {	RULE rule("x"); auto p = _{rule}; r = rule; }
+CASE() {	Rule rule("x"); auto p = _{rule}; r = rule; }
 
 //!!---------------------------------------------------------
 //!! FAIL: compiles, but "vector too long"!... :-o
-//!! RULE r = _{"a", "b"}
+//!! Rule r = _{"a", "b"}
 //!! auto p         = _{"a", "b"}
 //!!
 //!! BUT: these don't even compile!...:
 //auto p = _{"a", "b", "c"}
 //auto p = _{"a", "b"s}
-//auto p = _{"a", RULE("b")}
-//auto p = _{RULE("a"), "b"}
+//auto p = _{"a", Rule("b")}
+//auto p = _{Rule("a"), "b"}
 //!!---------------------------------------------------------
 
 CASE() {	r = _{ _{"a", " ", "b"} }; }
 
 CASE() {
-	auto sp = RULE(" "); //!!RULE("_WHITESPACE"); //!!NEED REGEX... until that, it's the literal "/[\\p{Z}]/u"
+	auto sp = Rule(" "); //!!Rule("_WHITESPACE"); //!!NEED REGEX... until that, it's the literal "/[\\p{Z}]/u"
 	r = _{
 		_{"a"s, sp, "b"s},
 	};
@@ -284,18 +284,18 @@ CASE() {	r = _{"_WHITESPACE", _{"a", "b"}, "_WHITESPACE"}; }
 */
 
 //!! "Ambiguous"...:
-//	RULE g1 = RULE({RULE("_WHITESPACES"), RULE("bingo"), RULE("_WHITESPACES"});
-//	RULE g2 = {Parser::_SEQ, "one", RULE(Parser::_NIL)}
+//	Rule g1 = Rule({Rule("_WHITESPACES"), Rule("bingo"), Rule("_WHITESPACES"});
+//	Rule g2 = {Parser::_SEQ, "one", Rule(Parser::_NIL)}
 
-//CASE() {	RULE copy_from_PROD_ctor = _{_NIL}; }
-//CASE() {	RULE PROD_ctor(_{_NIL}); }
+//CASE() {	Rule copy_from_Prod_ctor = _{_NIL}; }
+//CASE() {	Rule Prod_ctor(_{_NIL}); }
 
 
 
 CASE("regex smoke test") {
 	assert(Parser(_{"  ", "x"}).parse("  x")); // Verify that non-regex still works...
 	auto prod = _{"_WHITESPACES", "x"};
-	auto r = RULE{prod};
+	auto r = Rule{prod};
 	     r.DUMP();
 	auto p = Parser(r);
 	auto result = p.parse("  x");
@@ -333,6 +333,7 @@ CASE("infinite recursion detected") {
 		p.parse("!");
 		CHECK(false);
 	} catch (std::runtime_error& x) {
+		cerr << "\nThere should be an infinite recursion exception caught below:\n\n";
 		cerr << x.what() <<  endl;
 		CHECK("OK, got an error, but verify in the logs it's really the loop-guard!");
 	}
@@ -357,7 +358,7 @@ int main(int argc, char** argv)
 //! The local objects used in the test cases to reconfigure any globals have
 //! all died by now, so COPYLESS_GRAMMAR can't work with that!...
 //! (Albeit, when/if ready, it should bail out automatically!)
-#pragma message("Warning: COPYLESS_GRAMMAR requires RULE objects that outlive their access cases!...")
+#pragma message("Warning: COPYLESS_GRAMMAR requires Rule objects that outlive their access cases!...")
 #endif
 */
 

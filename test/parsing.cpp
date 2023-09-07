@@ -9,95 +9,95 @@
 using namespace Parsing;
 
 /*
-RULE r = _NIL; //!!RENAME TO GET IT OUTTA WAY; e.g.: rule = _NIL;
+Rule r = _NIL; //!!RENAME TO GET IT OUTTA WAY; e.g.: rule = _NIL;
 
-// Constr. from atom, RULE copy-constr.
+// Constr. from atom, Rule copy-constr.
 CASE() {
-	r = RULE("my atom"); // ATOM is implied!
+	r = Rule("my atom"); // Atom is implied!
 	auto r_copy = r;
 }
 CASE() { using Ss = std::vector<string>; Ss s = {"a"}; }
 
-CASE() { using Rs = std::vector<RULE>; Rs r = {RULE("a")}; }
+CASE() { using Rs = std::vector<Rule>; Rs r = {Rule("a")}; }
 // Not needed:
-CASE() { using Rs = std::vector<RULE>; Rs r = initializer_list<RULE>({RULE("a")}); }
+CASE() { using Rs = std::vector<Rule>; Rs r = initializer_list<Rule>({Rule("a")}); }
 
-CASE() { r = {RULE("a")}; }
+CASE() { r = {Rule("a")}; }
 
-CASE() { r = _{RULE("a"), RULE("b")}; }
+CASE() { r = _{Rule("a"), Rule("b")}; }
 
 //!!FAIL: ...but no wonder; I have no idea, what initializer_list really does ;)
-//RULE r = initializer_list<RULE>({RULE("a"), RULE("b")});
+//Rule r = initializer_list<Rule>({Rule("a"), Rule("b")});
 
-CASE() { r = _{RULE("a"), RULE(" "), RULE("b")}; }
+CASE() { r = _{Rule("a"), Rule(" "), Rule("b")}; }
 
-CASE() { r = _{_MANY, RULE("x")}; }
+CASE() { r = _{_MANY, Rule("x")}; }
 
-CASE() { r = _{_ANY, RULE("x")}; }
+CASE() { r = _{_ANY, Rule("x")}; }
 
 CASE() {
 	r = _{
-		RULE("a"),
-		_{RULE(_NIL)},
+		Rule("a"),
+		_{Rule(_NIL)},
 	};
 }
 
 CASE() {
 	r = _{
-		RULE("a"),
-		_{_ANY, RULE(" ")},
-		RULE("b"),
+		Rule("a"),
+		_{_ANY, Rule(" ")},
+		Rule("b"),
 	};
 }
 
 CASE() {
 	r = _{
-		_{_OR, RULE("one"), RULE("twoe"), RULE("*") },
+		_{_OR, Rule("one"), Rule("twoe"), Rule("*") },
 	};
 }
 
 CASE() {
 	r = _{
-		_{_NOT, RULE(" x ")},
+		_{_NOT, Rule(" x ")},
 	};
 }
 
 CASE() {
 	r = _{
-		_{_OR, RULE("one"), RULE("two"), RULE("*") },
-		_{_NOT, RULE("x")},
+		_{_OR, Rule("one"), Rule("two"), Rule("*") },
+		_{_NOT, Rule("x")},
 	};
 }
 
 //!! Regex not yet...:
-//!!{ RULE r = _{RULE("a"), RULE("_WHITESPACES"), RULE("b")} }
+//!!{ Rule r = _{Rule("a"), Rule("_WHITESPACES"), Rule("b")} }
 
 CASE() {	r = _{"x"}; }
-CASE() {	r = RULE(_{"x"}); }
-CASE() {	r = RULE(_{RULE("x")}); }
+CASE() {	r = Rule(_{"x"}); }
+CASE() {	r = Rule(_{Rule("x")}); }
 
-CASE() {	r = _{RULE("a"), RULE("b")}; }
+CASE() {	r = _{Rule("a"), Rule("b")}; }
 CASE() {	r = _{"a"s, "b"s}; }
-CASE() {	r = _{"a"s}; } // Seems to be the same: RULE r{ ... }
+CASE() {	r = _{"a"s}; } // Seems to be the same: Rule r{ ... }
 
-CASE() {	RULE rule("x"); auto p = _{rule}; r = rule; }
+CASE() {	Rule rule("x"); auto p = _{rule}; r = rule; }
 
 //!!---------------------------------------------------------
 //!! FAIL: compiles, but "vector too long"!... :-o
-//!! RULE r = _{"a", "b"}
+//!! Rule r = _{"a", "b"}
 //!! auto p         = _{"a", "b"}
 //!!
 //!! BUT: these don't even compile!...:
 //auto p = _{"a", "b", "c"}
 //auto p = _{"a", "b"s}
-//auto p = _{"a", RULE("b")}
-//auto p = _{RULE("a"), "b"}
+//auto p = _{"a", Rule("b")}
+//auto p = _{Rule("a"), "b"}
 //!!---------------------------------------------------------
 
 CASE() {	r = _{ _{"a", " ", "b"} }; }
 
 CASE() {
-	auto sp = RULE(" "); //!!RULE("_WHITESPACE"); //!!NEED REGEX... until that, it's the literal "/[\\p{Z}]/u"
+	auto sp = Rule(" "); //!!Rule("_WHITESPACE"); //!!NEED REGEX... until that, it's the literal "/[\\p{Z}]/u"
 	r = _{
 		_{"a"s, sp, "b"s},
 	};
@@ -109,17 +109,17 @@ CASE() {	r = _{"_WHITESPACE", _{"a", "b"}, "_WHITESPACE"}; }
 */
 
 //!! "Ambiguous"...:
-//	RULE g1 = RULE({RULE("_WHITESPACES"), RULE("bingo"), RULE("_WHITESPACES"});
-//	RULE g2 = {Parser::_SEQ, "one", RULE(Parser::_NIL)}
+//	Rule g1 = Rule({Rule("_WHITESPACES"), Rule("bingo"), Rule("_WHITESPACES"});
+//	Rule g2 = {Parser::_SEQ, "one", Rule(Parser::_NIL)}
 
-//CASE() {	RULE copy_from_PROD_ctor = _{_NIL}; }
-//CASE() {	RULE PROD_ctor(_{_NIL}); }
+//CASE() {	Rule copy_from_Prod_ctor = _{_NIL}; }
+//CASE() {	Rule Prod_ctor(_{_NIL}); }
 
 
 CASE("regex smoke test") {
 	assert(Parser(_{"  ", "x"}).parse("  x")); // Verify that non-regex still works...
 	auto prod = _{"_WHITESPACES", "x"};
-	auto rule = RULE{prod};
+	auto rule = Rule{prod};
 	     rule.DUMP();
 	auto p = Parser(rule);
 	auto result = p.parse("  x");
@@ -171,7 +171,7 @@ CASE("_OR: more than 2") {
 	CHECK(p.parse(";"));
 	CHECK(!p.parse("!"));
 }
-CASE("_OR: mixed with PROD arg") {
+CASE("_OR: mixed with Prod arg") {
 	Parser p(_{
 		_{_OR, "_DIGITS", _{"a", "b"}},
 		";" // ; just for anchoring
@@ -185,7 +185,7 @@ CASE("_OR: mixed with PROD arg") {
 	CHECK(!p.parse("1 a b;"));
 }
 CASE("_OR: wtf original") {
-	RULE x = _{"x"};
+	Rule x = _{"x"};
 	Parser good{_{_OR, x, '$', "++++++++SENTINEL++++++++"}};
 	//good.syntax.DUMP();
 	CHECK(good.parse("x -> This is correct actually, nothing to see here."));
@@ -196,11 +196,11 @@ CASE("_OR: wtf original") {
 }
 CASE("_OR: wtf opcode error") {
 	try {
-	RULE code = _{_MANY, _{_OR, "_ID", "=", "_DIGITS", ";", "_WHITESPACES"} };
+	Rule code = _{_MANY, _{_OR, "_ID", "=", "_DIGITS", ";", "_WHITESPACES"} };
 	// '$' is a nonexistent opcode, jus to trigger an error:
-	RULE bad  = _{_{_{_OR, code, '$', "++++++++SENTINEL++++++++"}}};
+	Rule bad  = _{_{_{_OR, code, '$', "++++++++SENTINEL++++++++"}}};
 	// "$" is just an ordinary literal, no problems:
-	RULE good = _{_{_{_OR, code, "$", "++++++++SENTINEL++++++++"}}};
+	Rule good = _{_{_{_OR, code, "$", "++++++++SENTINEL++++++++"}}};
 //	Parser p(good); p.syntax.DUMP();
 	Parser p(bad); p.syntax.DUMP();
 	p.parse("...check the logs, look for the SENTINEL in the OR loop!");
@@ -216,7 +216,7 @@ CASE("_NOT") {
 	CHECK(p.parse(" "));
 	CHECK(p.parse(""));
 }
-CASE("_NOT: PROD arg") {
+CASE("_NOT: Prod arg") {
 	Parser p(_{_NOT, _{"a", "b"}});
 	p.syntax.DUMP();
 	CHECK(!p.parse("ab"));
@@ -231,7 +231,7 @@ CASE("_NOT: PROD arg") {
 
 
 CASE("set int - ANY") {
-	RULE r = _{
+	Rule r = _{
 		_{_ANY, "_WHITESPACE"},
 		"_ID",
 		_{_ANY, "_WHITESPACE"},
@@ -251,7 +251,7 @@ CASE("set int - ANY") {
 }
 
 CASE("set int - OPT") {
-	RULE r = _{
+	Rule r = _{
 		_{_OPT, "_WHITESPACES"},
 		"_ID",
 		_{_OPT, "_WHITESPACES"},
@@ -288,7 +288,7 @@ int main(int argc, char** argv)
 //! The local objects used in the test cases to reconfigure any globals have
 //! all died by now, so COPYLESS_GRAMMAR can't work with that!...
 //! (Albeit, when/if ready, it should bail out automatically!)
-#pragma message("Warning: COPYLESS_GRAMMAR requires RULE objects that outlive their access cases!...")
+#pragma message("Warning: COPYLESS_GRAMMAR requires Rule objects that outlive their access cases!...")
 #endif
 */
 

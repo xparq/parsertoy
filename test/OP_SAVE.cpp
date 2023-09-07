@@ -94,7 +94,7 @@ CASE("CAPTURE: structured with implicit SEQ shorthand") {
 		// Comment, exploiting the fact that after matching this as the last rule,
 		// everything else that follows will be ignored
 		_{_OPT, _{ _{_ANY, "_WHITESPACES"}, "////"}},
-			// Can't just put "//" as the last ATOM, as that
+			// Can't just put "//" as the last Atom, as that
 			// would be mistaken with an empty regex! :) -> #6
 */
 	}); p.syntax.DUMP();
@@ -156,9 +156,9 @@ CASE("CAPTURE: named") {
 }
 
 CASE("CAPTURE: nested") {
-	RULE code = _{_MANY, _{_OR, "_ID", "=", "_DIGITS", ";", "_WHITESPACES"} };
-	RULE block_in = _{"<", _{_SAVE_AS, "inner", code}, ">"};
-	RULE block_out = _{"<", _{_SAVE_AS, "outer",
+	Rule code = _{_MANY, _{_OR, "_ID", "=", "_DIGITS", ";", "_WHITESPACES"} };
+	Rule block_in = _{"<", _{_SAVE_AS, "inner", code}, ">"};
+	Rule block_out = _{"<", _{_SAVE_AS, "outer",
 				_{ _{_OPT, code}, _{_OPT, block_in}, _{_OPT, code} },
 			}, ">"};
 
