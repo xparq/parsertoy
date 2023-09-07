@@ -250,8 +250,6 @@ struct Rule
 	//!! Can't define this outside of Rule, sadly. But shipping with a `using Rule::Production` can help!
 	using Production = std::vector<Rule>;
 
-	const Rule* _parent = nullptr; // top-level rule, if no parent
-
 	enum {
 		OP,
 		PROD,
@@ -361,8 +359,6 @@ DBG("Rule::Prod-copy-ctor creating [{}] from [{}] as prod[0].type: {}...",
 		if (prod().empty()) {
 			_destruct(); // Clean up the empty Prod we've just created...
 			_init_as_nil();
-		} else {
-			_relink_parents();
 		}
 //DBG("Rule::Prod-ctor creating [{}] done.", (void*)this);
 	}
@@ -421,8 +417,6 @@ DBG("Rule::Prod-move-ctor created [{}] from prod[0].type: {}...", (void*)this, p
 		if (prod().empty()) {
 			_destruct(); // Clean up the empty Prod we've just created...
 			_init_as_nil();
-		} else {
-			_relink_parents();
 		}
 	}
 
@@ -467,14 +461,6 @@ DBG("- Setting up empty rule...");
 
 	void _init_atom(auto&& s);
 
-	void _relink_parents() {
-		if (!is_prod()) return;
-		for (auto& r : prod()) {
-			r._parent = this;
-			r._relink_parents();
-		}
-	}
-
 	public:
 	const Rule* _lookup(const string& n) const {
 		if (name == n) return this;
@@ -513,7 +499,6 @@ private:
 #endif
 		else                opcode = other.opcode; // just a number...
 
-		_relink_parents();
 DBG("Rule::_copy (type == {}) done.", _type_cstr());
 	}
 
@@ -539,7 +524,6 @@ DBG("Rule::_copy (type == {}) done.", _type_cstr());
 		else                opcode = std::move(tmp.opcode); // just a number...
 		tmp.type = _MOVED_FROM_;
 
-		_relink_parents();
 DBG("Rule::_move (type == {}) done.", _type_cstr());
 	}
 
@@ -572,8 +556,8 @@ DBG("Rule::_move (type == {}) done.", _type_cstr());
 		auto _p  [[maybe_unused]] = [&](auto x, auto... args) {cerr << x << endl; };
 
 		if (!level) p("/------------------------------------------------------------------\\");
-		if (name.empty()) p_(format("[{} :{}] {} (type #{}):",      (void*)this, (void*)_parent, _type_cstr(), (int)type));
-		else                p_(format("[{} :{}] {} (type #{}) '{}':", (void*)this, (void*)_parent, _type_cstr(), (int)type, name));
+		if (name.empty()) p_(format("[{}] {} (type #{}):",      (void*)this, _type_cstr(), (int)type));
+		else                p_(format("[{}] {} (type #{}) '{}':", (void*)this, _type_cstr(), (int)type, name));
 		if (type == _DESTROYED_)  p(" !!! INVALID (DESTROYED) OBJECT !!!");
 		if (type == _MOVED_FROM_) p(" !!! INVALID (MOVED-FROM) OBJECT !!!");
 		if (is_atom()) { _p_(format(" \"{}\"", atom));
