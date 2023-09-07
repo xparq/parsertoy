@@ -37,18 +37,18 @@
  -----------------------------------------------------------------------------
   TODO:
 
-  - WTF is wrong with the move semantics?! Rule's move-ctor is never triggered!
-    UPDATE: it kinda does now, but still not fully understand the cases
-    where it doesn't.
+  - WTF is wrong with the move semantics?! Rule's move-ctor is sometimes
+    not triggered, when I think it should be (i.e. moving them into the Prod
+    vector implicitly).
 
   - multi-emplace _prod_append(...); -- and a similar ctor?? (possible?)
 
-  - Rule("") and Rule(NIL) should create a *valid* empty rule.
-    UPDATE: I think it (kinda?) does now? Not quire sure in which exaxt
-            cases, though.
-    And then there could also be a default ctor then... The reason I still
-    don't have it is I don't want to encourage that. Everything works without
-    it (so far), and there's no obvious benefit.
+  - Rule("") should create a *valid* empty rule, and and Rule(NIL) should
+    keep creating just an opcode!
+
+    (And then there could be a default ctor, too?... But I don't want to
+    encourage that. Everything works without it so far, and there's no clear
+    benefit to it.)
 
  *****************************************************************************/
 
@@ -133,7 +133,7 @@
 #  define DBG(msg, ...)
 #  define DBG_(msg, ...)
 #  define DBG_(msg, ...)
-#  define DBG_TRIM(str, ...)
+#  define DBG_TRIM(str, ...) (str)
 #endif
 
 
@@ -545,6 +545,7 @@ DBG("Rule::_move (type == {}) done.", _type_cstr());
 
 	//-----------------------------------------------------------
 	// Diagnostics...
+#ifndef NDEBUG	
 	void _dump(unsigned level = 0) const {
 /*!!
 		template <typename ... Types> auto f(Types&& ... args) {
@@ -586,7 +587,7 @@ DBG("Rule::_move (type == {}) done.", _type_cstr());
 		_p(d_memo.empty() ? "" : format(" // {} ", d_memo));
 		if (!level) p("\\------------------------------------------------------------------/\n");
 	}
-#ifndef NDEBUG
+
 	public: void DUMP() const { _dump(); }
 #else
 	public: void DUMP() const {}
@@ -997,7 +998,7 @@ DBG("T: 'true' op. (returning true)");
 				{
 //!! MAAAN, C++... Just can't pass DBG_TRIM to format(), as it returns a temporary.
 //!! Have to actually create a var for that. :-/
-{ auto src = DBG_TRIM(p.text.c_str() + pos);
+{ [[maybe_unused]] auto src = DBG_TRIM(p.text.c_str() + pos);
 DBG("REGEX \"{}\": MATCHED \"{}\" with length {}.", atom, src, m.length()); }
 /* OK, since regex_search does support ^, this is no longer required:
 DBG_("REGEX \"{}\": MATCHED '{}' with length {}...", atom, p.text.substr(pos), m.length());
@@ -1020,7 +1021,7 @@ _DBG(" in the middle -- REJECTED.");
 DBG("REGEX \"{}\": ---NOT--- MATCHED '{}'!", atom, p.text.substr(pos));
 				}
 			}
-			catch(std::exception& x)
+			catch([[maybe_unused]] std::exception& x)
 			{
 				DBG("OP[_ATOM]: FAILED REGEX \"{}\": ({})", atom, x.what());
 			}
@@ -1205,7 +1206,7 @@ DBG("\n\n    SNAPSHOT[{}]: \"{}\"\n\n", name, snapshot);
 		return false;
 	};
 
-	CONST_OPERATORS[_DEF] = [](Parser& p, [[maybe_unused]] size_t pos, const Rule& rule, OUT [[maybe_unused]] size_t& len) -> bool {
+	CONST_OPERATORS[_DEF] = []([[maybe_unused]] Parser& p, [[maybe_unused]] size_t pos, const Rule& rule, OUT [[maybe_unused]] size_t& len) -> bool {
 		assert(rule.prod().size() == 3);
 		assert(rule.prod()[1].is_atom());
 		auto name = rule.prod()[1].atom;
