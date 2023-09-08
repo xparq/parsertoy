@@ -228,6 +228,7 @@ namespace Parsing {
 //!!??	CONST _SELF        = OPCODE('@');  // Invoke the enclosing DEF-target rule, or NIL if none
 
 
+        //-------------------------------------------------------------------
 	// Operator functions...
 	struct Rule;
 	class Parser;
@@ -242,6 +243,17 @@ namespace Parsing {
 		// These will be populated later, as e.g.:
 		// OPERATORS[SOME_OPCODE] = [](Parser&, input_pos, rule&) { ... return match-length or 0; }
 		// Can be freely extended by users (respecting the opcode list above).
+
+	void define(OPCODE opcode, CONST_OPERATOR op) {
+		CONST_OPERATORS[opcode] = op;
+	}
+/*!!
+	void define(OPCODE opcode, OPERATOR op) { //!! This won't work: C++ still won't dispatch on c-v-different op types,
+	                                          //!! *despite* refusing to accept them as interchangeable! :-/
+	void ddefine(OPCODE opcode, OPERATOR op) {
+		OPERATORS[opcode] = op;
+	}
+!!*/
 
 
 //---------------------------------------------------------------------------
@@ -696,6 +708,7 @@ public:
 	const string& operator[](const string& name) const;
 	const string& operator[](size_t index_of_unnamed) const;
 
+
 	//-------------------------------------------------------------------
 	bool match(size_t pos, const Rule& rule, OUT size_t& len)
 	// pos is the source position
@@ -933,22 +946,19 @@ void init()
 
 	assert(CONST_OPERATORS.empty());
 	//-------------------------------------------------------------------
-	CONST_OPERATORS[_NIL] = [](Parser&, size_t, const Rule&, OUT size_t&) -> bool
-	{
+	define(_NIL, [](Parser&, size_t, const Rule&, OUT size_t&) {
 DBG("NIL: no op. (returning false)");
 		return false;
-	};
+	});
 
 	//-------------------------------------------------------------------
-	CONST_OPERATORS[_T] = [](Parser&, size_t, const Rule&, OUT size_t&) -> bool
-	{
+	define(_T, [](Parser&, size_t, const Rule&, OUT size_t&) {
 DBG("T: 'true' op. (returning true)");
 		return true;
-	};
+	});
 
 	//-------------------------------------------------------------------
-	CONST_OPERATORS[_ATOM] = [](Parser& p, size_t pos, const Rule& rule, OUT size_t& len) -> bool
-	{
+	define(_ATOM, [](Parser& p, size_t pos, const Rule& rule, OUT size_t& len) {
 		assert(rule.is_atom());
 		static_assert(std::is_same<Atom, string>::value);
 		string atom = rule.atom;
@@ -1037,11 +1047,10 @@ DBG("LITERAL \"{}\": MATCHED '{}'!", atom, string_view(p.text).substr(pos, len))
 				return true;
 			} else	return false;
 		}
-	};
+	});
 
 	//-------------------------------------------------------------------
-	CONST_OPERATORS[_SEQ] = [](Parser& p, size_t pos, const Rule& rule, OUT size_t& len) -> bool
-	{
+	define(_SEQ, [](Parser& p, size_t pos, const Rule& rule, OUT size_t& len) {
 		assert(rule.is_prod());
 		assert(rule.prod().size() >= 2);
 
@@ -1054,11 +1063,10 @@ DBG("LITERAL \"{}\": MATCHED '{}'!", atom, string_view(p.text).substr(pos, len))
 			else len += len_add;
 		}
 		return true;
-	};
+	});
 
 	//-------------------------------------------------------------------
-	CONST_OPERATORS[_SEQ_IMPLIED] = [](Parser& p, size_t pos, const Rule& rule, OUT size_t& len) -> bool
-	{
+	define(_SEQ_IMPLIED, [](Parser& p, size_t pos, const Rule& rule, OUT size_t& len) {
 DBG("_SEQ_IMPLIED: Processing rule [{}]", (void*)&rule);
 		assert(rule.is_prod());
 //!! -> #25	assert(rule.prod().size() > 1);
@@ -1073,11 +1081,10 @@ DBG("_SEQ_IMPLIED: Processing rule [{}]", (void*)&rule);
 			else len += len_add;
 		}
 		return true;
-	};
+	});
 
 	//-------------------------------------------------------------------
-	CONST_OPERATORS[_OR]  = [](Parser& p, size_t pos, const Rule& rule, OUT size_t& len) -> bool
-	{
+	define(_OR, [](Parser& p, size_t pos, const Rule& rule, OUT size_t& len) {
 		assert(rule.prod().size() >= 3);
 
 		for (auto r = rule.prod().cbegin() + 1; r != rule.prod().cend(); ++r)
@@ -1091,22 +1098,20 @@ else                DBG("_OR: checking (non-operator) rule [{}]...", (void*)&(*r
 			}
 		}
 		return false;
-	};
+	});
 
 	//-------------------------------------------------------------------
-	CONST_OPERATORS[_OPT] = [](Parser& p, size_t pos, const Rule& rule, OUT size_t& len) -> bool
-	{
+	define(_OPT, [](Parser& p, size_t pos, const Rule& rule, OUT size_t& len) {
 		assert(rule.prod().size() == 2);
 
 		if (!p.match(pos, rule.prod()[1], len)) {
 			len = 0;
 		}
 		return true;
-	};
+	});
 
 	//-------------------------------------------------------------------
-	CONST_OPERATORS[_ANY] = [](Parser& p, size_t pos, const Rule& rule, OUT size_t& len) -> bool
-	{
+	define(_ANY, [](Parser& p, size_t pos, const Rule& rule, OUT size_t& len) {
 		assert(rule.prod().size() == 2);
 
 		len = 0;
@@ -1125,11 +1130,10 @@ else                DBG("_OR: checking (non-operator) rule [{}]...", (void*)&(*r
 		} while (pos + len < p.text_length);
 
 		return true;
-	};
+	});
 
 	//-------------------------------------------------------------------
-	CONST_OPERATORS[_MANY] = [](Parser& p, size_t pos, const Rule& rule, OUT size_t& len) -> bool
-	{
+	define(_MANY, [](Parser& p, size_t pos, const Rule& rule, OUT size_t& len) {
 		assert(rule.prod().size() == 2);
 
 		len = 0;
@@ -1150,11 +1154,10 @@ else                DBG("_OR: checking (non-operator) rule [{}]...", (void*)&(*r
 		} while (pos + len < p.text_length);
 
 		return at_least_one_match;
-	};
+	});
 
 	//-------------------------------------------------------------------
-	CONST_OPERATORS[_NOT] = [](Parser& p, size_t pos, const Rule& rule, OUT size_t& len) -> bool
-	{
+	define(_NOT, [](Parser& p, size_t pos, const Rule& rule, OUT size_t& len) {
 		assert(rule.prod().size() == 2);
 
 		if (size_t tmplen; p.match(pos, rule.prod()[1], tmplen)) {
@@ -1163,11 +1166,10 @@ else                DBG("_OR: checking (non-operator) rule [{}]...", (void*)&(*r
 			len = tmplen;
 			return true;
 		}
-	};
+	});
 
 	//---------------------------------------------------------------------------
-	CONST_OPERATORS[_SAVE] = [](Parser& p, size_t pos, const Rule& rule, OUT size_t& len) -> bool
-	{
+	define(_SAVE, [](Parser& p, size_t pos, const Rule& rule, OUT size_t& len) {
 		assert(rule.prod().size() >= 2);
 
 		// Shift off the _SAVE prefix...
@@ -1181,10 +1183,9 @@ DBG("\n\n    SNAPSHOT: [{}]\n\n", snapshot);
 			return true;
 		}
 		return false;
-	};
+	});
 
-	CONST_OPERATORS[_SAVE_AS] = [](Parser& p, size_t pos, const Rule& rule, OUT size_t& len) -> bool
-	{
+	define(_SAVE_AS, [](Parser& p, size_t pos, const Rule& rule, OUT size_t& len) {
 		assert(rule.prod().size() >= 3);
 		assert(rule.prod()[1].is_atom());
 
@@ -1201,9 +1202,9 @@ DBG("\n\n    SNAPSHOT[{}]: \"{}\"\n\n", name, snapshot);
 			return true;
 		}
 		return false;
-	};
+	});
 
-	CONST_OPERATORS[_DEF] = []([[maybe_unused]] Parser& p, [[maybe_unused]] size_t pos, const Rule& rule, OUT [[maybe_unused]] size_t& len) -> bool {
+	define(_DEF, []([[maybe_unused]] Parser& p, [[maybe_unused]] size_t pos, const Rule& rule, OUT [[maybe_unused]] size_t& len) {
 		assert(rule.prod().size() == 3);
 		assert(rule.prod()[1].is_atom());
 		auto name = rule.prod()[1].atom;
@@ -1212,9 +1213,9 @@ DBG("\n\n    SNAPSHOT[{}]: \"{}\"\n\n", name, snapshot);
 DBG("_DEF: '{}' -> [{}], lookup: {}", name, (void*)&(*target_rule), (void*)p.syntax.lookup(name));
 		len = 0;
 		return true;
-	};
+	});
 
-	CONST_OPERATORS[_USE] = [](Parser& p, size_t pos, const Rule& rule, OUT size_t& len) -> bool {
+	define(_USE, [](Parser& p, size_t pos, const Rule& rule, OUT size_t& len) {
 		assert(rule.prod().size() == 2);
 		assert(rule.prod()[1].is_atom());
 		auto name = rule.prod()[1].atom;
@@ -1227,10 +1228,10 @@ DBG("_DEF: '{}' -> [{}], lookup: {}", name, (void*)&(*target_rule), (void*)p.syn
 		}
 DBG("_USE: trying rule [{}] at pos {}...", (void*)target_rule, pos);
 		return p.match(pos, *target_rule, len);
-	};
+	});
 
 /*!!
-	CONST_OPERATORS[_SELF] = [](Parser& p, size_t pos, const Rule& rule, OUT size_t& len) -> bool {
+	define(_SELF, [](Parser& p, size_t pos, const Rule& rule, OUT size_t& len) {
 		assert(rule.prod().size() == 1);
 
 		auto target_rule = ...
@@ -1241,7 +1242,7 @@ DBG("_SELF: recursing...");
 		} else {
 			return false;
 		}
-	};
+	});
 !!*/
 
 	assert(!NAMED_PATTERNS.empty());

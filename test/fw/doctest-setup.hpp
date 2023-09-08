@@ -3,7 +3,7 @@
 #include "doctest-customized.h" //! Dir-of-this-file is non-standard, but supported widely enough
 
 #include <iostream>
-	using std::cerr;
+	using std::cerr, std::cout, std::endl;
 
 /*==========================================================================\
   TESTING:
