@@ -115,6 +115,22 @@ CASE() {	r = _{"_WHITESPACE", _{"a", "b"}, "_WHITESPACE"}; }
 //CASE() {	Rule copy_from_Prod_ctor = _{_NIL}; }
 //CASE() {	Rule Prod_ctor(_{_NIL}); }
 
+CASE("empty atom - user literal") {
+	CHECK(Parser("").parse("anything"));
+}
+CASE("empty atom - user regex") {
+	CHECK(Parser("//").parse("anything"));
+}
+CASE("empty atom - curated regex") {
+	CHECK(Parser("_EMPTY").parse("anything"));
+}
+/* no such thing (yet?):
+CASE("empty atom - cuarted literal") {}
+*/
+CASE("empty prod.") {
+	CHECK(Parser(_{}).parse("anything"));
+}
+
 
 CASE("regex smoke test") {
 	assert(Parser(_{"  ", "x"}).parse("  x")); // Verify that non-regex still works...

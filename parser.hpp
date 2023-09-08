@@ -1,34 +1,37 @@
 ﻿#ifndef _PARSERTOY_HPP_
 #define _PARSERTOY_HPP_
 /*****************************************************************************
-  Programmable, extensible recursive descent parser for small tasks
+  Programmable, extensible recursive descent parser for small/simple tasks
 
-    In a sense, this is just a naive, inefficient reimplementation of some
-    common regex functionality -- using regexes... And, for better or worse,
-    it's also like a sort of embryonic LISP. (I only noticed that after
-    it has kinda become one all by itself.)
+    In a sense, this is just an inefficient reimplementation of some common
+    regex functionality -- using regexes... (And, for better or worse, it's
+    also like a sort of embryonic LISP... I only noticed that after it has
+    kinda become one all by itself, so not my fault! ;) )
 
-    (I'm not even sure it still qualifies as a rec. desc. parser.
-    I don't know much about parsing at all, actually.)
+    (I'm not even sure it still qualifies as a rec. desc. parser... I don't
+    know much about parsing at all, as you may see.)
 
     The main feature would be actually building an AST, and supporting user
     hooks for matching constructs etc., I just haven't got 'round to it yet.
     At least this is a "structured regex engine" (or "programmable regexes"
-    is also echoing in my mind); i.e. _regular_ regular expressions really
-    dislike structured text, while this can handle nested (recursive)
-    constructs kinda effortlessly.
+    is also echoing in my mind); i.e. _regular_ regular expressions tend to
+    dislike structured text (while this thing can handle nested (recursive)
+    constructs in a more straightforward yet also more expressive manner).
 
-    And the regex syntax sucks, too, for anything non-trivial. It's like
-    eating thistle, while hugging a hedgehog. Consider this to be a blanket
-    around regexes, and also an exoskeleton, to not only proxy, but extend
-    their abilities.
+    Also, the regex syntax kinda sucks. It's like eating thistle, while
+    hugging a hedgehog. Consider this to be a blanket around regexes, and
+    also an exoskeleton, to not only proxy, but extend some of their abilities
+    (while admittedly limiting some others).
+
+    Another point is that with the extensible set of operators can implement
+    support for non-regular languages.
 
   NOTE:
 
   - It copies the source text, so that it can be kept a little more clean
-    & robust (e.g. for threading), instead of trying to be copyless (and
-    be kinda brittle and ugly with pointers, or offering a false sense of
-    security with a string_view). It's still a toy, not for huge texts, so...
+    & robust (e.g. for threading), instead of trying to be copyless (with
+    a brittle and ugly impl. using pointers, or offering a false sense of
+    security with a string_view). It's still a toy, not for huge texts...
 
   - If you need to #include this in more than one translation units, then
     #define PARSERTOY_DEDUP for all but the first one. (This way the most
@@ -245,8 +248,26 @@ namespace Parsing {
 // Grammar rules...
 //---------------------------------------------------------------------------
 struct Rule
+// User Grammar (syntax) rule expression, as a recursive Rule tree
+//
+// A Rule can be:
+// - an ATOM: string literal or regex pattern,
+// - a PRODUCTION: an operator followed by 0 or more operands (all wrapped into a Production list (std::vector))
+// - or, as a special case for internal use: an operator itself (i.e. an OPCODE), alone.
+//   (This is just so we can put an operator into the Production list, which can only hold Rule objects.)
+//
+// For the sake of simplifying/unifying processing, if an empty rule is being created,
+// it'll be transformed into a production consisting of the NIL operator.
+//!!TBD: THIS MIGHT CHANGE TO BE AN EMPTY LITERAL ATOM (""). There's already an "_EMPTY" pattern anyway.
+//       (However, a NIL rule actually bails out of the processing faster than matching an empty-string.)
+//!!WOW: Just found this; it seems like this dilemma isn't just bothering me! :)
+//!!     https://stackoverflow.com/a/16620973/1479945
+//!!
+
+// !!TBD: Since every rule is boolean, it's also kinda a question whether an empty rule should be
+//        TRUE or FALSE... Hitting an empty rule could cancel the entire syntax, if NIL, rather than
+//        just being redundant, as one might expect it, and as is with an EMPTY atom!...
 {
-	// User Grammar rule expression, as a recursive Rule tree
 	//!! Can't define this outside of Rule, sadly. But shipping with a `using Rule::Production` can help!
 	using Production = std::vector<Rule>;
 
@@ -331,6 +352,15 @@ struct Rule
 #else
 		return _prod;
 #endif
+	}
+
+
+	const Rule* lookup(const string& n) const {
+		if (name == n) return this;
+		if (is_prod()) for(auto& r : prod()) {
+			if (auto res = r.lookup(n); res) return res;
+		}
+		return nullptr;
 	}
 
 
@@ -439,8 +469,6 @@ DBG("~Rule destructing [{}] (type: {})...", (void*)this, _type_cstr());
 
 
 private:
-//!!??friend class Parser; //!!?? WTF does this make no difference?! See _lookup()!
-
 	//-----------------------------------------------------------
 	// Construction/destruction/copy/move helpers...
 
@@ -460,15 +488,6 @@ DBG("- Setting up empty rule...");
 	}
 
 	void _init_atom(auto&& s);
-
-	public:
-	const Rule* _lookup(const string& n) const {
-		if (name == n) return this;
-		if (is_prod()) for(auto& r : prod()) {
-			if (auto res = r._lookup(n); res) return res;
-		}
-		return nullptr;
-	}
 
 private:
 	void _destruct() {
@@ -638,11 +657,6 @@ public:
 		text_length = txt.length();
 	}
 
-/*!!??WTF cannot access -- it's set as friend! :-o
-	const Rule* _lookup(const string& name) const {
-		return syntax._lookup(name);
-	}
-??!!*/
 	//-------------------------------------------------------------------
 	Parser(const Rule& syntax, int maxnest = RECURSION_LIMIT):
 		// Sync with _reset*()!
@@ -944,10 +958,9 @@ DBG("T: 'true' op. (returning true)");
 		if (rule.type == Rule::CURATED_REGEX || rule.type == Rule::USER_REGEX)
 		{
 			try {
-//!!?? ^[[:word:]] is not defined?!
-//				REGEX regx(atom); //!!PRECOMPILE!...
-				REGEX regx(atom, std::regex::extended); //!!PRECOMPILE!...
-//!!?? C++			REGEX regx(atom, std::regex::extended | std::regex_constants::multiline ); //!!PRECOMPILE!...
+				REGEX regx(atom); //!!PRECOMPILE!...
+//				REGEX regx(atom, std::regex::extended); //!!PRECOMPILE!...
+//				REGEX regx(atom, std::regex::extended | std::regex_constants::multiline); //!!PRECOMPILE!...
 				std::smatch m;
 	//!!?? WTF, C++?	if (std::regex_search(string_view(p.text).substr(pos), m, regx)
 	//!!?? WTF, C++?	if (std::regex_search(p.text.begin(), p.text.begin() + pos, m, regx)
@@ -1196,7 +1209,7 @@ DBG("\n\n    SNAPSHOT[{}]: \"{}\"\n\n", name, snapshot);
 		auto name = rule.prod()[1].atom;
 		auto target_rule = rule.prod().begin() + 2;
 		target_rule->name = name;
-DBG("_DEF: '{}' -> [{}], lookup: {}", name, (void*)&(*target_rule), (void*)p.syntax._lookup(name));
+DBG("_DEF: '{}' -> [{}], lookup: {}", name, (void*)&(*target_rule), (void*)p.syntax.lookup(name));
 		len = 0;
 		return true;
 	};
@@ -1206,7 +1219,7 @@ DBG("_DEF: '{}' -> [{}], lookup: {}", name, (void*)&(*target_rule), (void*)p.syn
 		assert(rule.prod()[1].is_atom());
 		auto name = rule.prod()[1].atom;
 
-		auto target_rule = p.syntax._lookup(name);
+		auto target_rule = p.syntax.lookup(name);
 
 		if (!target_rule) {
 			ERROR("_USE: '{}' was not found!", name);
