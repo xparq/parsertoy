@@ -125,7 +125,7 @@ CASE("empty atom - curated regex") {
 	CHECK(Parser("_EMPTY").parse("anything"));
 }
 /* no such thing (yet?):
-CASE("empty atom - cuarted literal") {}
+CASE("empty atom - curated literal") {}
 */
 CASE("empty prod.") {
 	CHECK(Parser(_{}).parse("anything"));

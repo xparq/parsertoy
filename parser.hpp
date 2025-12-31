@@ -716,11 +716,11 @@ public:
 	// If matches, returns the length of the matched input, otherwise 0.
 	//-------------------------------------------------------------------
 	{
-DBG("match({}, {} [{}]: '{}')... // loopguard: {}", pos,
+DBG("match({}, {} [{}]: '{}')... // Rec. depth: {}", pos,
 			rule._type_cstr(), (void*)&rule,
 			rule.type == Rule::USER_LITERAL ? rule.atom :
 			rule.is_opcode() ? string(1, (char)rule.opcode) : "",
-			loopguard);
+			RECURSION_LIMIT - loopguard);
 
 		--loopguard;
 		if (depth_reached > loopguard)
